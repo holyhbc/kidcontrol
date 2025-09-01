@@ -25,8 +25,7 @@ jobs:
     - name: Clone OpenWrt source
       run: |
         git clone --depth=1 https://github.com/openwrt/openwrt.git openwrt
-        cd openwrt
-        git checkout openwrt-24.10-SNAPSHOT
+        
 
     - name: Prepare minimal feeds
       run: |
