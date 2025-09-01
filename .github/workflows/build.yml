@@ -35,8 +35,8 @@ jobs:
 
     - name: Add luci-app-kidcontrol
       run: |
-        cd openwrt/package
-        git clone https://github.com/openwrt/luci.git
+        cd openwrt/package 
+        git clone  https://github.com/holyhbc/kidcontrol.git
         cp -r luci/applications/luci-app-kidcontrol ./luci-app-kidcontrol
         rm -rf luci
 
