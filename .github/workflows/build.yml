@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    name: Build luci-app-kidcontrol
+    name: Build OpenWrt luci-app-kidcontrol
     runs-on: ubuntu-latest
 
     steps:
@@ -24,28 +24,38 @@ jobs:
 
     - name: Clone OpenWrt source
       run: |
-        git clone --depth=1 https://github.com/openwrt/openwrt.git openwrt
+        mkdir -p openwrt
         cd openwrt
-        git checkout openwrt-24.10-SNAPSHOT
+        git clone --depth=1 https://github.com/openwrt/openwrt.git .
+        git checkout main
 
-    - name: Prepare minimal feeds
+    - name: Prepare feeds (skip video feed to avoid errors)
       run: |
         cd openwrt
-        # 删除 video feed 避免 mesa 等大包
         sed -i '/src-git video/d' feeds.conf.default
-        ./scripts/feeds update luci packages routing telephony
-        ./scripts/feeds install luci
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
 
     - name: Copy luci-app-kidcontrol package
       run: |
         mkdir -p openwrt/package/luci-app-kidcontrol
         cp -r luci-app-kidcontrol/* openwrt/package/luci-app-kidcontrol/
 
-    - name: Build luci-app-kidcontrol
+    - name: Ensure LuCI framework dependencies
       run: |
         cd openwrt
+        dep=$(grep '^LUCI_DEPENDS:=' package/luci-app-kidcontrol/Makefile | sed 's/LUCI_DEPENDS:=//')
+        if [ ! -z "$dep" ]; then
+          for pkg in $dep; do
+            ./scripts/feeds install -p ${pkg%% *} -a
+          done
+        fi
+
+    - name: Build luci-app-kidcontrol IPK
+      run: |
+        cd openwrt
+        # 避免 ncurses menuconfig 报错
         export TERM=dumb
-        make defconfig
         make package/luci-app-kidcontrol/compile V=s
 
     - name: Generate version tag
@@ -67,6 +77,6 @@ jobs:
     - name: Upload IPK to Release
       uses: softprops/action-gh-release@v1
       with:
-        files: openwrt/bin/packages/**/luci/luci-app-kidcontrol_*.ipk
+        files: openwrt/bin/targets/mediatek/filogic/packages/luci-app-kidcontrol_*.ipk
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
