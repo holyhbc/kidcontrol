@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4   # ✅ 最新版 checkout
 
       - name: Setup dependencies
         run: |
@@ -20,7 +20,7 @@ jobs:
             gettext unzip file libssl-dev wget python3
 
       - name: Cache dl
-        uses: actions/cache@v3
+        uses: actions/cache@v4   # ✅ 升级到 v4
         with:
           path: openwrt/dl
           key: ${{ runner.os }}-dl
@@ -28,7 +28,7 @@ jobs:
             ${{ runner.os }}-dl
 
       - name: Cache staging_dir
-        uses: actions/cache@v3
+        uses: actions/cache@v4   # ✅ 升级到 v4
         with:
           path: openwrt/staging_dir
           key: ${{ runner.os }}-staging
@@ -53,7 +53,7 @@ jobs:
           make package/luci-app-kidcontrol/compile V=s -j$(nproc)
 
       - name: Upload ipk
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4   # ✅ 升级到 v4
         with:
           name: luci-app-kidcontrol
           path: openwrt/bin/packages/**/*.ipk
