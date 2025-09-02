@@ -17,14 +17,11 @@ jobs:
     - name: Build inside OpenWrt SDK Container
       run: |
         docker pull ghcr.io/openwrt/sdk:mediatek-filogic-24.10-SNAPSHOT
-        docker run --rm -v "${{ github.workspace }}:/src" \
+        docker run --rm \
+          -v "${{ github.workspace }}/luci-app-kidcontrol:/home/build/openwrt/package/luci-app-kidcontrol" \
           -w /home/build/openwrt \
           ghcr.io/openwrt/sdk:mediatek-filogic-24.10-SNAPSHOT \
           /bin/sh -c "
-            # 确保 package 目录存在
-            mkdir -p /home/build/openwrt/package/luci-app-kidcontrol &&
-            # 拷贝 luci-app-kidcontrol 到 SDK
-            cp -r /src/luci-app-kidcontrol/* /home/build/openwrt/package/luci-app-kidcontrol/ &&
             # 更新 feeds
             ./scripts/feeds update -a &&
             ./scripts/feeds install -a &&
