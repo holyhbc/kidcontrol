@@ -1,14 +1,11 @@
-name: Build OpenWrt with luci-app-kidcontrol
+name: Build luci-app-kidcontrol
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
@@ -17,32 +14,31 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential clang flex bison g++ gawk \
-            gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev \
-            python3-distutils rsync unzip zlib1g-dev file wget curl libdeflate0 libdeflate-dev
+          sudo apt-get install -y build-essential libncurses5-dev libncursesw5-dev \
+            zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip python3
 
-      - name: Clone OpenWrt
+      - name: Clone OpenWrt source
         run: |
-          git clone https://github.com/openwrt/openwrt.git
+          git clone --depth=1 https://github.com/openwrt/openwrt.git openwrt
+
+      - name: Move luci-app-kidcontrol into OpenWrt package
+        run: |
+          cp -r luci-app-kidcontrol openwrt/package/
+
+      - name: Update and install feeds
+        run: |
           cd openwrt
-          git checkout openwrt-24.10
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Prepare build
+      - name: Compile luci-app-kidcontrol
         run: |
           cd openwrt
           make defconfig
-          make tools/install -j$(nproc)
-          make toolchain/install -j$(nproc)
-
-      - name: Build luci-app-kidcontrol
-        run: |
-          cd openwrt
-          make package/luci-app-kidcontrol/compile -j$(nproc) V=sc
+          make package/luci-app-kidcontrol/compile V=sc -j$(nproc)
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: kidcontrol-ipks
-          path: openwrt/bin/packages
+          name: luci-app-kidcontrol-ipk
+          path: openwrt/bin/packages/**/base/luci-app-kidcontrol*.ipk
