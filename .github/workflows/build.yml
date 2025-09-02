@@ -19,20 +19,6 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y git wget tar xz-utils
 
-    - name: Prepare directories
-      run: |
-        mkdir -p $HOME/build/openwrt
-        mkdir -p $HOME/build/tmp
-
-    - name: Clone OpenWrt 24.10 source
-      run: |
-        git clone --depth=1 -b openwrt-24.10 https://git.openwrt.org/openwrt/openwrt.git $HOME/build/openwrt
-
-    - name: Copy luci-app-kidcontrol
-      run: |
-        mkdir -p $HOME/build/openwrt/package/luci-app-kidcontrol
-        cp -r luci-app-kidcontrol/* $HOME/build/openwrt/package/luci-app-kidcontrol/
-
     - name: Pull OpenWrt SDK Docker
       run: |
         docker pull ghcr.io/openwrt/sdk:mediatek-filogic-24.10-SNAPSHOT
@@ -40,14 +26,18 @@ jobs:
     - name: Build luci-app-kidcontrol inside SDK
       run: |
         docker run --rm \
-          -v "$HOME/build/openwrt:/home/build/openwrt" \
-          -v "$HOME/build/tmp:/home/build/tmp" \
-          -w /home/build/openwrt \
-          -e TMPDIR=/home/build/tmp \
+          -v "${{ github.workspace }}/luci-app-kidcontrol:/src/luci-app-kidcontrol" \
+          -w /work \
           ghcr.io/openwrt/sdk:mediatek-filogic-24.10-SNAPSHOT \
           /bin/sh -c "
-            export TERM=dumb &&
-            # 单包编译，不用 feeds
+            set -e
+            # 复制 OpenWrt 完整源码到容器内部可写目录
+            git clone --depth=1 -b openwrt-24.10 https://git.openwrt.org/openwrt/openwrt.git /work/openwrt
+            # 拷贝你的 package
+            cp -r /src/luci-app-kidcontrol /work/openwrt/package/luci-app-kidcontrol
+            export TERM=dumb
+            cd /work/openwrt
+            # 直接编译单包，不用 feeds
             make package/luci-app-kidcontrol/compile -j\$(nproc) V=s
           "
 
@@ -70,7 +60,7 @@ jobs:
     - name: Upload IPK to Release
       uses: softprops/action-gh-release@v1
       with:
-        files: $HOME/build/openwrt/bin/packages/*/base/luci-app-kidcontrol_*.ipk
+        files: /work/openwrt/bin/packages/*/base/luci-app-kidcontrol_*.ipk
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -78,4 +68,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: luci-app-kidcontrol-ipk
-        path: $HOME/build/openwrt/bin/packages/*/base/luci-app-kidcontrol_*.ipk
+        path: /work/openwrt/bin/packages/*/base/luci-app-kidcontrol_*.ipk
