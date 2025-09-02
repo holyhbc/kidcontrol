@@ -1,55 +1,38 @@
-name: Build luci-app-kidcontrol (OpenWrt 24.10.2 SDK)
+name: Build luci-app-kidcontrol (via Docker SDK)
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build luci-app-kidcontrol (SDK 24.10.2)
+    name: Build with Docker SDK
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
+    - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Install dependencies
+    - name: Build inside OpenWrt SDK Container
       run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential libncurses5-dev gawk git gettext libssl-dev \
-          xsltproc zlib1g-dev unzip python3 python3-venv file wget
-
-    - name: Download OpenWrt 24.10.2 SDK (mediatek/filogic)
-      run: |
-        wget https://downloads.openwrt.org/releases/24.10.2/targets/mediatek/filogic/openwrt-sdk-24.10.2-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64.tar.xz
-        tar -xf openwrt-sdk-*.tar.xz
-        mv openwrt-sdk-* openwrt-sdk
-
-    - name: Copy luci-app-kidcontrol into SDK
-      run: |
-        mkdir -p openwrt-sdk/package/luci-app-kidcontrol
-        cp -r luci-app-kidcontrol/* openwrt-sdk/package/luci-app-kidcontrol/
-
-    - name: Prepare feeds
-      run: |
-        cd openwrt-sdk
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
-        make defconfig
-
-    - name: Build luci-app-kidcontrol
-      run: |
-        cd openwrt-sdk
-        export TERM=dumb
-        make package/luci-app-kidcontrol/compile -j$(nproc) V=s
+        docker pull ghcr.io/openwrt/sdk:mediatek-filogic-24.10-SNAPSHOT
+        docker run --rm -v "${{ github.workspace }}:/work" -w /work \
+          ghcr.io/openwrt/sdk:mediatek-filogic-24.10-SNAPSHOT \
+          /bin/sh -c "
+            mkdir -p package/luci-app-kidcontrol &&
+            cp -r luci-app-kidcontrol/* package/luci-app-kidcontrol/ &&
+            ./scripts/feeds update -a &&
+            ./scripts/feeds install -a &&
+            make defconfig &&
+            export TERM=dumb &&
+            make package/luci-app-kidcontrol/compile -j$(nproc) V=s
+          "
 
     - name: Generate version tag
       id: tag
       run: |
-        VERSION="v24.10.2-$(date +'%Y.%m.%d.%H%M')"
+        VERSION="v24.10-${{ github.run_number }}-$(date +'%Y.%m.%d.%H%M')"
         echo "VERSION=$VERSION" >> $GITHUB_ENV
 
     - name: Create GitHub Release
@@ -65,6 +48,6 @@ jobs:
     - name: Upload IPK to Release
       uses: softprops/action-gh-release@v1
       with:
-        files: openwrt-sdk/bin/packages/*/base/luci-app-kidcontrol_*.ipk
+        files: bin/packages/*/base/luci-app-kidcontrol_*.ipk
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
