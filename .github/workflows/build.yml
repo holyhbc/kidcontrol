@@ -1,74 +1,59 @@
-name: Build luci-app-kidcontrol for 360T7
+name: Build luci-app-kidcontrol
 
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+  workflow_dispatch:   # 手动触发
+  push:                # 推送代码时触发
+    branches:
+      - main
 
 jobs:
   build:
-    name: Build OpenWrt IPK
-    runs-on: ubuntu-latest
-
+    runs-on: ubuntu-22.04
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v3
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y git wget tar xz-utils
+      - name: Setup dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses5-dev gawk \
+            gettext unzip file libssl-dev wget python3
 
-    - name: Pull OpenWrt SDK Docker
-      run: |
-        docker pull ghcr.io/openwrt/sdk:mediatek-filogic-24.10-SNAPSHOT
+      - name: Cache dl
+        uses: actions/cache@v3
+        with:
+          path: openwrt/dl
+          key: ${{ runner.os }}-dl
+          restore-keys: |
+            ${{ runner.os }}-dl
 
-    - name: Build luci-app-kidcontrol inside SDK
-      run: |
-        docker run --rm \
-          -v "${{ github.workspace }}/luci-app-kidcontrol:/src/luci-app-kidcontrol:ro" \
-          -w /tmp \
-          ghcr.io/openwrt/sdk:mediatek-filogic-24.10-SNAPSHOT \
-          /bin/sh -c "
-            set -e
-            export TERM=dumb
-            # 容器内部创建完全可写的构建目录
-            BUILD_DIR=/tmp/openwrt_build
-            mkdir -p \$BUILD_DIR
-            cd \$BUILD_DIR
-            # Clone OpenWrt 源码
-            git clone --depth=1 -b openwrt-24.10 https://git.openwrt.org/openwrt/openwrt.git .
-            # 拷贝你的 package
-            cp -r /src/luci-app-kidcontrol package/luci-app-kidcontrol
-            # 编译单包
-            make package/luci-app-kidcontrol/compile -j\$(nproc) V=s
-          "
+      - name: Cache staging_dir
+        uses: actions/cache@v3
+        with:
+          path: openwrt/staging_dir
+          key: ${{ runner.os }}-staging
+          restore-keys: |
+            ${{ runner.os }}-staging
 
-    - name: Generate version tag
-      id: tag
-      run: |
-        VERSION="v24.10-${{ github.run_number }}-$(date +'%Y.%m.%d.%H%M')"
-        echo "VERSION=$VERSION" >> $GITHUB_ENV
+      - name: Clone OpenWrt source
+        run: |
+          git clone https://github.com/openwrt/openwrt.git
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
 
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ env.VERSION }}
-        name: ${{ env.VERSION }}
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Copy luci-app-kidcontrol
+        run: |
+          cp -r ./luci-app-kidcontrol ./openwrt/package/
 
-    - name: Upload IPK to Release
-      uses: softprops/action-gh-release@v1
-      with:
-        files: /tmp/openwrt_build/bin/packages/*/base/luci-app-kidcontrol_*.ipk
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build luci-app-kidcontrol
+        run: |
+          cd openwrt
+          make defconfig
+          make package/luci-app-kidcontrol/compile V=s -j$(nproc)
 
-    - name: Upload IPK as Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: luci-app-kidcontrol-ipk
-        path: /tmp/openwrt_build/bin/packages/*/base/luci-app-kidcontrol_*.ipk
+      - name: Upload ipk
+        uses: actions/upload-artifact@v3
+        with:
+          name: luci-app-kidcontrol
+          path: openwrt/bin/packages/**/*.ipk
