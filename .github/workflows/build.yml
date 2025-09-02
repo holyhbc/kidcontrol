@@ -22,9 +22,9 @@ jobs:
           ghcr.io/openwrt/sdk:mediatek-filogic-24.10-SNAPSHOT \
           /bin/sh -c "
             # 确保 package 目录存在
-            mkdir -p package/luci-app-kidcontrol &&
-            # 拷贝 luci-app-kidcontrol 进 SDK
-            cp -r /src/luci-app-kidcontrol/* package/luci-app-kidcontrol/ &&
+            mkdir -p /home/build/openwrt/package/luci-app-kidcontrol &&
+            # 拷贝 luci-app-kidcontrol 到 SDK
+            cp -r /src/luci-app-kidcontrol/* /home/build/openwrt/package/luci-app-kidcontrol/ &&
             # 更新 feeds
             ./scripts/feeds update -a &&
             ./scripts/feeds install -a &&
@@ -55,6 +55,6 @@ jobs:
     - name: Upload IPK to Release
       uses: softprops/action-gh-release@v1
       with:
-        files: bin/packages/*/base/luci-app-kidcontrol_*.ipk
+        files: /home/build/openwrt/bin/packages/*/base/luci-app-kidcontrol_*.ipk
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
