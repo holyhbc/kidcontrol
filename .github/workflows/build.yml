@@ -19,14 +19,19 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y git wget tar xz-utils
 
+    - name: Prepare directories
+      run: |
+        mkdir -p $HOME/build/openwrt
+        mkdir -p $HOME/build/tmp
+
     - name: Clone OpenWrt 24.10 source
       run: |
-        git clone --depth=1 -b openwrt-24.10 https://git.openwrt.org/openwrt/openwrt.git openwrt
+        git clone --depth=1 -b openwrt-24.10 https://git.openwrt.org/openwrt/openwrt.git $HOME/build/openwrt
 
     - name: Copy luci-app-kidcontrol
       run: |
-        mkdir -p openwrt/package/luci-app-kidcontrol
-        cp -r luci-app-kidcontrol/* openwrt/package/luci-app-kidcontrol/
+        mkdir -p $HOME/build/openwrt/package/luci-app-kidcontrol
+        cp -r luci-app-kidcontrol/* $HOME/build/openwrt/package/luci-app-kidcontrol/
 
     - name: Pull OpenWrt SDK Docker
       run: |
@@ -35,12 +40,14 @@ jobs:
     - name: Build luci-app-kidcontrol inside SDK
       run: |
         docker run --rm \
-          -v "${{ github.workspace }}/openwrt:/home/build/openwrt" \
+          -v "$HOME/build/openwrt:/home/build/openwrt" \
+          -v "$HOME/build/tmp:/home/build/tmp" \
           -w /home/build/openwrt \
+          -e TMPDIR=/home/build/tmp \
           ghcr.io/openwrt/sdk:mediatek-filogic-24.10-SNAPSHOT \
           /bin/sh -c "
             export TERM=dumb &&
-            # 直接编译单包，不用 feeds
+            # 单包编译，不用 feeds
             make package/luci-app-kidcontrol/compile -j\$(nproc) V=s
           "
 
@@ -63,7 +70,7 @@ jobs:
     - name: Upload IPK to Release
       uses: softprops/action-gh-release@v1
       with:
-        files: openwrt/bin/packages/*/base/luci-app-kidcontrol_*.ipk
+        files: $HOME/build/openwrt/bin/packages/*/base/luci-app-kidcontrol_*.ipk
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -71,4 +78,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: luci-app-kidcontrol-ipk
-        path: openwrt/bin/packages/*/base/luci-app-kidcontrol_*.ipk
+        path: $HOME/build/openwrt/bin/packages/*/base/luci-app-kidcontrol_*.ipk
