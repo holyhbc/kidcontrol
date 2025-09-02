@@ -17,7 +17,8 @@ jobs:
     - name: Build inside OpenWrt SDK Container
       run: |
         docker pull ghcr.io/openwrt/sdk:mediatek-filogic-24.10-SNAPSHOT
-        docker run --rm -v "${{ github.workspace }}:/src" -w /sdk \
+        docker run --rm -v "${{ github.workspace }}:/src" \
+          -w /home/build/openwrt \
           ghcr.io/openwrt/sdk:mediatek-filogic-24.10-SNAPSHOT \
           /bin/sh -c "
             # 确保 package 目录存在
