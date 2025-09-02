@@ -26,18 +26,21 @@ jobs:
     - name: Build luci-app-kidcontrol inside SDK
       run: |
         docker run --rm \
-          -v "${{ github.workspace }}/luci-app-kidcontrol:/src/luci-app-kidcontrol" \
-          -w /work \
+          -v "${{ github.workspace }}/luci-app-kidcontrol:/src/luci-app-kidcontrol:ro" \
+          -w /tmp \
           ghcr.io/openwrt/sdk:mediatek-filogic-24.10-SNAPSHOT \
           /bin/sh -c "
             set -e
-            # 复制 OpenWrt 完整源码到容器内部可写目录
-            git clone --depth=1 -b openwrt-24.10 https://git.openwrt.org/openwrt/openwrt.git /work/openwrt
-            # 拷贝你的 package
-            cp -r /src/luci-app-kidcontrol /work/openwrt/package/luci-app-kidcontrol
             export TERM=dumb
-            cd /work/openwrt
-            # 直接编译单包，不用 feeds
+            # 容器内部创建完全可写的构建目录
+            BUILD_DIR=/tmp/openwrt_build
+            mkdir -p \$BUILD_DIR
+            cd \$BUILD_DIR
+            # Clone OpenWrt 源码
+            git clone --depth=1 -b openwrt-24.10 https://git.openwrt.org/openwrt/openwrt.git .
+            # 拷贝你的 package
+            cp -r /src/luci-app-kidcontrol package/luci-app-kidcontrol
+            # 编译单包
             make package/luci-app-kidcontrol/compile -j\$(nproc) V=s
           "
 
@@ -60,7 +63,7 @@ jobs:
     - name: Upload IPK to Release
       uses: softprops/action-gh-release@v1
       with:
-        files: /work/openwrt/bin/packages/*/base/luci-app-kidcontrol_*.ipk
+        files: /tmp/openwrt_build/bin/packages/*/base/luci-app-kidcontrol_*.ipk
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -68,4 +71,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: luci-app-kidcontrol-ipk
-        path: /work/openwrt/bin/packages/*/base/luci-app-kidcontrol_*.ipk
+        path: /tmp/openwrt_build/bin/packages/*/base/luci-app-kidcontrol_*.ipk
