@@ -40,7 +40,7 @@ jobs:
           ghcr.io/openwrt/sdk:mediatek-filogic-24.10-SNAPSHOT \
           /bin/sh -c "
             export TERM=dumb &&
-            # 编译单包，不用 feeds
+            # 直接编译单包，不用 feeds
             make package/luci-app-kidcontrol/compile -j\$(nproc) V=s
           "
 
@@ -67,8 +67,8 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Upload IPK as Artifacts (optional)
-      uses: actions/upload-artifact@v3
+    - name: Upload IPK as Artifacts
+      uses: actions/upload-artifact@v4
       with:
         name: luci-app-kidcontrol-ipk
         path: openwrt/bin/packages/*/base/luci-app-kidcontrol_*.ipk
