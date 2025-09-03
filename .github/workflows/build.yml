@@ -1,93 +1,48 @@
-name: Build luci-app-kidcontrol for OpenWrt
+name: Build luci-app-kidcontrol
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build luci-app-kidcontrol
     runs-on: ubuntu-latest
-    timeout-minutes: 30
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        path: kidcontrol-repo
+    - uses: actions/checkout@v4
 
-    - name: Install build dependencies
+    - name: Setup environment
       run: |
         sudo apt-get update
-        sudo apt-get install -y \
-          build-essential libncurses5-dev gawk git gettext libssl-dev \
-          xsltproc zlib1g-dev unzip python3 python3-venv file wget
+        sudo apt-get install -y wget tar build-essential
 
-    - name: Download OpenWrt SDK for Mediatek Filogic (360T7)
+    - name: Download and extract SDK
       run: |
-        # 下载适用于 360T7 路由器的 SDK
-        SDK_URL="https://downloads.openwrt.org/releases/23.05.3/targets/mediatek/filogic/openwrt-sdk-23.05.3-mediatek-filogic_gcc-12.3.0_musl.Linux-x86_64.tar.xz"
-        wget -q $SDK_URL
-        tar -xf openwrt-sdk-*.tar.xz
-        mv openwrt-sdk-* sdk
-        echo "SDK downloaded successfully"
-
-    - name: Copy luci-app-kidcontrol to SDK
-      run: |
-        # 复制整个 luci-app-kidcontrol 目录到 SDK
-        cp -r kidcontrol-repo/luci-app-kidcontrol sdk/package/
-        echo "Contents of SDK package directory:"
-        ls -la sdk/package/luci-app-kidcontrol/
-
-    - name: Verify Makefile
-      run: |
-        echo "Makefile content:"
-        cat sdk/package/luci-app-kidcontrol/Makefile
-        echo ""
-        echo "Directory structure:"
-        find sdk/package/luci-app-kidcontrol -type f
-
-    - name: Build the package
-      run: |
-        cd sdk
-        # 只编译 luci-app-kidcontrol 包
-        make package/luci-app-kidcontrol/compile V=s
-
-    - name: Find and prepare IPK file
-      run: |
-        cd sdk
-        # 查找生成的 IPK 文件
-        IPK_FILE=$(find bin -name "luci-app-kidcontrol*.ipk" | head -n1)
+        # 下载 SDK
+        wget https://downloads.openwrt.org/releases/23.05.3/targets/mediatek/filogic/openwrt-sdk-23.05.3-mediatek-filogic_gcc-12.3.0_musl.Linux-x86_64.tar.xz
         
-        if [ -f "$IPK_FILE" ]; then
-            echo "✅ Build successful! Found IPK: $IPK_FILE"
-            # 创建输出目录
-            mkdir -p ../output
-            # 复制 IPK 文件
-            cp "$IPK_FILE" ../output/
-            # 保存文件信息
-            echo "IPK_FILENAME=$(basename $IPK_FILE)" >> $GITHUB_ENV
-            echo "IPK_PATH=$IPK_FILE" >> $GITHUB_ENV
-        else
-            echo "❌ IPK file not found!"
-            echo "Searching for any IPK files:"
-            find bin -name "*.ipk" | head -10
-            echo "Build directory contents:"
-            find bin -type f | head -20
-            exit 1
-        fi
-
-    - name: Upload IPK as artifact
+        # 解压到当前目录
+        tar -xf *.tar.xz
+        
+        # 查看解压后的目录
+        echo "Extracted directories:"
+        ls -la
+        
+        # 进入第一个找到的 openwrt-sdk 目录
+        cd openwrt-sdk-*
+        echo "Current directory: $(pwd)"
+        
+        # 复制包文件
+        mkdir -p package/luci-app-kidcontrol
+        cp -r ../* package/luci-app-kidcontrol/
+        
+        # 编译
+        make package/luci-app-kidcontrol/compile
+        
+        # 复制生成的 IPK
+        cp $(find bin -name "*.ipk") ../
+        
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: luci-app-kidcontrol-ipk
-        path: output/*.ipk
-        if-no-files-found: error
-
-    - name: Show build summary
-      run: |
-        echo "🎉 Build completed successfully!"
-        echo "📦 IPK file: ${{ env.IPK_FILENAME }}"
-        echo "📁 IPK path: ${{ env.IPK_PATH }}"
+        name: kidcontrol-package
+        path: *.ipk
