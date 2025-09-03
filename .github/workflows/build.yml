@@ -1,48 +1,75 @@
-name: Build luci-app-kidcontrol
+name: Build luci-app-kidcontrol for 360T7
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
   build:
+    name: Build luci-app-kidcontrol
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-    - name: Setup environment
+    - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y wget tar build-essential
+        sudo apt-get install -y build-essential libncurses5-dev gawk git gettext libssl-dev xsltproc zlib1g-dev unzip python3 python3-venv file wget
 
-    - name: Download and extract SDK
+    - name: Download OpenWrt SDK
       run: |
-        # 下载 SDK
-        wget https://downloads.openwrt.org/releases/23.05.3/targets/mediatek/filogic/openwrt-sdk-23.05.3-mediatek-filogic_gcc-12.3.0_musl.Linux-x86_64.tar.xz
-        
-        # 解压到当前目录
-        tar -xf *.tar.xz
-        
-        # 查看解压后的目录
-        echo "Extracted directories:"
-        ls -la
-        
-        # 进入第一个找到的 openwrt-sdk 目录
-        cd openwrt-sdk-*
-        echo "Current directory: $(pwd)"
-        
-        # 复制包文件
-        mkdir -p package/luci-app-kidcontrol
-        cp -r ../* package/luci-app-kidcontrol/
-        
-        # 编译
-        make package/luci-app-kidcontrol/compile
-        
-        # 复制生成的 IPK
-        cp $(find bin -name "*.ipk") ../
-        
-    - name: Upload artifact
+        SDK_URL="https://downloads.openwrt.org/releases/23.05.3/targets/mediatek/filogic/openwrt-sdk-23.05.3-mediatek-filogic_gcc-12.3.0_musl.Linux-x86_64.tar.xz"
+        wget -q $SDK_URL
+        tar -xf openwrt-sdk-*.tar.xz
+        # 查找解压后的目录并重命名
+        SDK_DIR=$(ls -d openwrt-sdk-* 2>/dev/null | head -n1)
+        if [ -n "$SDK_DIR" ]; then
+            mv "$SDK_DIR" sdk
+            echo "SDK directory renamed to sdk"
+        else
+            echo "Error: Could not find SDK directory"
+            ls -la
+            exit 1
+        fi
+
+    - name: Copy package to SDK
+      run: |
+        mkdir -p sdk/package/luci-app-kidcontrol
+        cp -r luci-app-kidcontrol/* sdk/package/luci-app-kidcontrol/
+        echo "Package files copied:"
+        ls -la sdk/package/luci-app-kidcontrol/
+
+    - name: Build the package
+      run: |
+        cd sdk
+        make package/luci-app-kidcontrol/compile V=s
+
+    - name: Find and prepare IPK file
+      run: |
+        cd sdk
+        IPK_FILE=$(find bin -name "luci-app-kidcontrol*.ipk" | head -n1)
+        if [ -f "$IPK_FILE" ]; then
+            echo "IPK_FILE=$IPK_FILE" >> $GITHUB_ENV
+            mkdir -p ../output
+            cp "$IPK_FILE" ../output/
+        else
+            echo "IPK file not found!"
+            find bin -name "*.ipk" | head -10
+            exit 1
+        fi
+
+    - name: Upload IPK artifact
       uses: actions/upload-artifact@v4
       with:
-        name: kidcontrol-package
-        path: *.ipk
+        name: luci-app-kidcontrol-ipk
+        path: output/*.ipk
+
+    - name: Show build result
+      run: |
+        echo "Build completed successfully!"
+        echo "IPK file: ${{ env.IPK_FILE }}"
