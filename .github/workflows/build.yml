@@ -1,4 +1,4 @@
-name: Build luci-app-kidcontrol for 360T7 (mt7981)
+name: Build luci-app-kidcontrol for 360T7 (filogic)
 
 on:
   push:
@@ -9,7 +9,8 @@ on:
 
 env:
   PACKAGE_NAME: luci-app-kidcontrol
-  TARGET: "mediatek/mt7981"
+  OPENWRT_VERSION: "24.10.1"
+  TARGET: "mediatek/filogic"
 
 jobs:
   build:
@@ -24,63 +25,21 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib gettext git libncurses5-dev libssl-dev python3 rsync unzip zlib1g-dev file wget curl
 
-    - name: Find available OpenWrt version
-      run: |
-        # 尝试获取可用的版本
-        echo "Checking available OpenWrt versions for ${{ env.TARGET }}..."
-        
-        # 尝试24.10.1
-        SDK_URL="https://downloads.openwrt.org/releases/24.10.1/targets/${{ env.TARGET }}/"
-        if curl --output /dev/null --silent --head --fail "$SDK_URL"; then
-          echo "OPENWRT_VERSION=24.10.1" >> $GITHUB_ENV
-          echo "Using version 24.10.1"
-        else
-          # 尝试23.05.6（稳定版）
-          SDK_URL="https://downloads.openwrt.org/releases/23.05.6/targets/${{ env.TARGET }}/"
-          if curl --output /dev/null --silent --head --fail "$SDK_URL"; then
-            echo "OPENWRT_VERSION=23.05.6" >> $GITHUB_ENV
-            echo "Using version 23.05.6 (stable)"
-          else
-            # 尝试22.03.6（更旧的稳定版）
-            SDK_URL="https://downloads.openwrt.org/releases/22.03.6/targets/${{ env.TARGET }}/"
-            if curl --output /dev/null --silent --head --fail "$SDK_URL"; then
-              echo "OPENWRT_VERSION=22.03.6" >> $GITHUB_ENV
-              echo "Using version 22.03.6"
-            else
-              echo "Error: No suitable OpenWrt SDK version found!"
-              exit 1
-            fi
-          fi
-        fi
-
     - name: Determine SDK URL
       run: |
-        echo "Using OpenWrt version: ${{ env.OPENWRT_VERSION }}"
+        # 使用官方镜像路径
+        MIRROR_URL="https://mirror-03.infra.openwrt.org/releases"
+        # 或者使用主下载站点（备用）
+        # MIRROR_URL="https://downloads.openwrt.org/releases"
         
-        # 列出目标目录下的文件来找到正确的SDK文件名
-        TARGET_URL="https://downloads.openwrt.org/releases/${{ env.OPENWRT_VERSION }}/targets/${{ env.TARGET }}/"
-        echo "Checking available files at: $TARGET_URL"
+        # 构建SDK下载链接
+        SDK_FILENAME="openwrt-sdk-24.10.1-mediatek-filogic_gcc-14.2.0_musl.Linux-x86_64.tar.xz"
+        SDK_URL="$MIRROR_URL/${{ env.OPENWRT_VERSION }}/targets/${{ env.TARGET }}/$SDK_FILENAME"
         
-        # 获取目录列表并查找SDK文件
-        SDK_FILE=$(curl -s $TARGET_URL | grep -o 'openwrt-sdk-[^"]*\.tar\.xz' | head -n 1)
-        
-        if [ -z "$SDK_FILE" ]; then
-          # 如果无法解析HTML，尝试常见的命名模式
-          if [ "${{ env.OPENWRT_VERSION }}" = "24.10.1" ]; then
-            SDK_FILE="openwrt-sdk-24.10.1-mediatek-mt7981_gcc-14.2.0_musl.Linux-x86_64.tar.xz"
-          elif [ "${{ env.OPENWRT_VERSION }}" = "23.05.6" ]; then
-            SDK_FILE="openwrt-sdk-23.05.6-mediatek-mt7981_gcc-12.3.0_musl.Linux-x86_64.tar.xz"
-          elif [ "${{ env.OPENWRT_VERSION }}" = "22.03.6" ]; then
-            SDK_FILE="openwrt-sdk-22.03.6-mediatek-mt7981_gcc-11.3.0_musl.Linux-x86_64.tar.xz"
-          else
-            echo "Error: Cannot determine SDK filename"
-            exit 1
-          fi
-        fi
-        
-        SDK_URL="https://downloads.openwrt.org/releases/${{ env.OPENWRT_VERSION }}/targets/${{ env.TARGET }}/$SDK_FILE"
-        echo "SDK_URL=$SDK_URL" >> $GITHUB_ENV
-        echo "SDK_FILENAME=$SDK_FILE" >> $GITHUB_ENV
+        echo "SDK_URL=$SDR_URL" >> $GITHUB_ENV
+        echo "SDK_FILENAME=$SDK_FILENAME" >> $GITHUB_ENV
+        echo "MIRROR_URL=$MIRROR_URL" >> $GITHUB_ENV
+        echo "Building for 360T7 (Filogic) with OpenWrt ${{ env.OPENWRT_VERSION }}"
         echo "SDK download URL: $SDK_URL"
 
     - name: Download and Extract OpenWrt SDK
@@ -88,76 +47,123 @@ jobs:
         cd $GITHUB_WORKSPACE
         echo "Downloading SDK from: ${{ env.SDK_URL }}"
         
-        # 尝试下载，如果失败则退出
+        # 尝试从镜像站下载
         if ! wget --progress=dot:giga ${{ env.SDK_URL }} -O sdk.tar.xz; then
-          echo "Error: Failed to download SDK"
-          echo "Please check if the SDK URL is correct:"
-          echo "${{ env.SDK_URL }}"
-          exit 1
+          echo "Mirror failed, trying main download site..."
+          MAIN_URL="https://downloads.openwrt.org/releases/${{ env.OPENWRT_VERSION }}/targets/${{ env.TARGET }}/${{ env.SDK_FILENAME }}"
+          if ! wget --progress=dot:giga $MAIN_URL -O sdk.tar.xz; then
+            echo "Error: Failed to download SDK from both sources"
+            echo "Please check if the SDK exists at:"
+            echo "https://downloads.openwrt.org/releases/${{ env.OPENWRT_VERSION }}/targets/${{ env.TARGET }}/"
+            exit 1
+          fi
         fi
         
         mkdir -p openwrt-sdk
         tar -xf sdk.tar.xz -C openwrt-sdk --strip-components=1
         rm -f sdk.tar.xz
         echo "SDK extracted successfully"
+        ls -la openwrt-sdk/
+
+    - name: Verify SDK architecture
+      run: |
+        cd $GITHUB_WORKSPACE/openwrt-sdk
+        echo "SDK target architecture:"
+        cat .config | grep TARGET_ARCH_PACKAGES || true
+        cat .config | grep CONFIG_TARGET_ || true
+        echo "SDK info:"
+        ./staging_dir/host/bin/opkg --version || true
 
     - name: Prepare Package in SDK
       run: |
         cd $GITHUB_WORKSPACE/openwrt-sdk
-        # 只复制必要的文件，避免复制.git等无关文件
+        # 清除可能存在的旧包
+        rm -rf package/${{ env.PACKAGE_NAME }}
+        
+        # 创建包目录并复制所有必要文件
         mkdir -p package/${{ env.PACKAGE_NAME }}
-        cp -r $GITHUB_WORKSPACE/{Makefile,src,root,test,*.mk} package/${{ env.PACKAGE_NAME }}/ 2>/dev/null || true
-        cp -r $GITHUB_WORKSPACE/*.md package/${{ env.PACKAGE_NAME }}/ 2>/dev/null || true
-        # 确保至少有一个Makefile
-        if [ ! -f package/${{ env.PACKAGE_NAME }}/Makefile ]; then
-          cp $GITHUB_WORKSPACE/Makefile package/${{ env.PACKAGE_NAME }}/ || true
-        fi
-        echo "Package prepared in SDK"
+        cd package/${{ env.PACKAGE_NAME }}
+        
+        # 复制项目中的所有文件（除了.git等）
+        cp -r $GITHUB_WORKSPACE/* .
+        
+        # 清理不需要的文件
+        rm -rf .github .git* .vscode README.md LICENSE 2>/dev/null || true
+        
+        echo "Package contents:"
+        ls -la
 
     - name: Update Feeds
       run: |
         cd $GITHUB_WORKSPACE/openwrt-sdk
         ./scripts/feeds update -a
+        ./scripts/feeds install -a
 
-    - name: Configure SDK
+    - name: Configure SDK for package
       run: |
         cd $GITHUB_WORKSPACE/openwrt-sdk
+        # 生成默认配置
         make defconfig
+        
+        # 启用我们的包
         echo "CONFIG_PACKAGE_${{ env.PACKAGE_NAME }}=m" >> .config
+        
+        # 重新应用配置
         make defconfig
-        echo "Configuration complete"
+        
+        echo "Current package configuration:"
+        grep "CONFIG_PACKAGE_${{ env.PACKAGE_NAME }}" .config || echo "Package configuration not found"
+
+    - name: Check package dependencies
+      run: |
+        cd $GITHUB_WORKSPACE/openwrt-sdk
+        echo "Checking package dependencies..."
+        make package/${{ env.PACKAGE_NAME }}/check V=s || echo "Dependency check completed"
 
     - name: Compile the Package
       run: |
         cd $GITHUB_WORKSPACE/openwrt-sdk
-        make package/${{ env.PACKAGE_NAME }}/compile -j$(nproc)
+        echo "Starting compilation..."
+        make package/${{ env.PACKAGE_NAME }}/compile V=s -j$(($(nproc) + 1))
 
     - name: Find Compiled Package
       run: |
         cd $GITHUB_WORKSPACE/openwrt-sdk
-        IPK_PATH=$(find bin -name "*${{ env.PACKAGE_NAME }}*.ipk" | head -n 1)
+        echo "Searching for compiled IPK files..."
+        
+        # 在多个可能的位置查找
+        IPK_PATH=$(find . -name "*${{ env.PACKAGE_NAME }}*.ipk" | head -n 1)
+        
         if [ -f "$IPK_PATH" ]; then
-          echo "Found IPK: $IPK_PATH"
+          echo "✅ Found IPK: $IPK_PATH"
           mkdir -p $GITHUB_WORKSPACE/output
-          cp $IPK_PATH $GITHUB_WORKSPACE/output/
-          echo "PACKAGE_PATH=output/$(basename $IPK_PATH)" >> $GITHUB_ENV
+          cp "$IPK_PATH" $GITHUB_WORKSPACE/output/
+          echo "PACKAGE_PATH=output/$(basename "$IPK_PATH")" >> $GITHUB_ENV
+          
+          # 显示IPK信息
+          echo "IPK file info:"
+          ls -la "$IPK_PATH"
         else
-          echo "Error: IPK file not found!"
-          find . -name "*.ipk" | head -10
+          echo "❌ Error: IPK file not found!"
+          echo "Searching in all directories:"
+          find . -name "*.ipk" -type f | head -20
+          echo "Build directory contents:"
+          find . -name "build_dir*" -type d | head -5
           exit 1
         fi
 
     - name: Upload IPK as Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ env.PACKAGE_NAME }}-${{ env.OPENWRT_VERSION }}-mt7981
+        name: ${{ env.PACKAGE_NAME }}-${{ env.OPENWRT_VERSION }}-filogic
         path: $GITHUB_WORKSPACE/output/*.ipk
 
-    - name: Show Build Success
+    - name: Show Build Summary
       run: |
         echo "=========================================="
-        echo "Build successful! 🎉"
-        echo "Package: ${{ env.PACKAGE_NAME }}"
-        echo "OpenWrt: ${{ env.OPENWRT_VERSION }}"
-        echo "Target: ${{ env.TARGET }}"
+        echo "🎉 Build completed successfully!"
+        echo "📦 Package: ${{ env.PACKAGE_NAME }}"
+        echo "🔄 OpenWrt: ${{ env.OPENWRT_VERSION }}"
+        echo "🎯 Target: ${{ env.TARGET }} (360T7)"
+        echo "📁 Output: ${{ env.PACKAGE_PATH }}"
         echo "=========================================="
