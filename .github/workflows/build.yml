@@ -70,47 +70,61 @@ jobs:
         
         make defconfig
 
-    - name: Add custom package
+    - name: Debug directory structure
+      run: |
+        echo "Current workspace: $GITHUB_WORKSPACE"
+        echo "Directory structure:"
+        pwd
+        ls -la
+        echo "Kidcontrol directory:"
+        ls -la kidcontrol/ || echo "No kidcontrol directory"
+        echo "Package directory:"
+        ls -la kidcontrol/luci-app-kidcontrol/ || echo "No package directory"
+
+    - name: Copy package from correct path
       run: |
         cd $GITHUB_WORKSPACE
-        echo "Current directory: $(pwd)"
-        echo "Contents of current directory:"
-        ls -la
         
-        # 创建包目录
-        mkdir -p ../openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}
+        echo "Checking if package directory exists:"
+        if [ -d "kidcontrol/luci-app-kidcontrol" ]; then
+          echo "✅ Package directory found"
+          ls -la kidcontrol/luci-app-kidcontrol/
+        else
+          echo "❌ Package directory not found!"
+          exit 1
+        fi
         
-        # 复制所有文件到包目录（排除.git等隐藏文件）
-        find . -maxdepth 1 -type f -not -name ".*" -exec cp {} ../openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/ \;
+        # 创建目标目录
+        mkdir -p openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}
         
-        # 复制需要的目录
-        for dir in src root test luasrc; do
-          if [ -d "$dir" ]; then
-            cp -r "$dir" ../openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/
-          fi
-        done
+        # 复制所有文件从正确的路径
+        cp -r kidcontrol/luci-app-kidcontrol/* openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/
         
-        echo "Package contents:"
-        ls -la ../openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/
+        echo "✅ Files copied successfully"
+        echo "Target directory contents:"
+        ls -la openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/
 
     - name: Verify Makefile exists
       run: |
-        cd ../openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}
+        cd $GITHUB_WORKSPACE/openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}
         if [ ! -f "Makefile" ]; then
           echo "❌ Error: Makefile not found in package directory!"
+          echo "Current directory: $(pwd)"
           ls -la
           exit 1
         fi
         echo "✅ Makefile found and verified"
+        echo "Makefile content:"
+        head -10 Makefile
 
     - name: Download sources
       run: |
-        cd ../openwrt-source
+        cd $GITHUB_WORKSPACE/openwrt-source
         make download -j$(nproc)
 
     - name: Build only the required package
       run: |
-        cd ../openwrt-source
+        cd $GITHUB_WORKSPACE/openwrt-source
         echo "Compiling ${{ env.PACKAGE_NAME }} and dependencies..."
         
         # 只编译必要的工具链和依赖
@@ -128,7 +142,7 @@ jobs:
 
     - name: Find and collect IPK files
       run: |
-        cd ../openwrt-source
+        cd $GITHUB_WORKSPACE/openwrt-source
         echo "Searching for IPK files..."
         
         # 在主包目录查找
@@ -141,13 +155,13 @@ jobs:
         
         if [ -f "$IPK_FILE" ]; then
           echo "✅ Found: $IPK_FILE"
-          mkdir -p ../output
-          cp "$IPK_FILE" ../output/
+          mkdir -p $GITHUB_WORKSPACE/output
+          cp "$IPK_FILE" $GITHUB_WORKSPACE/output/
           
           # 同时复制nftables的依赖包（如果需要）
           NFTABLES_IPK=$(find bin -name "*nftables*.ipk" | head -n 1)
           if [ -f "$NFTABLES_IPK" ]; then
-            cp "$NFTABLES_IPK" ../output/
+            cp "$NFTABLES_IPK" $GITHUB_WORKSPACE/output/
             echo "Also copied nftables dependency"
           fi
         else
