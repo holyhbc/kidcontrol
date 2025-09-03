@@ -80,19 +80,17 @@ jobs:
         ./scripts/feeds install -a
         
         # 最小化配置，避免编译不必要的包
-        cat > .config << 'EOL'
-CONFIG_TARGET_mediatek=y
-CONFIG_TARGET_mediatek_filogic=y
-CONFIG_TARGET_mediatek_filogic_mt7981=y
-CONFIG_TARGET_mediatek_filogic_mt7981_360t7=y
-CONFIG_PACKAGE_luci=y
-CONFIG_PACKAGE_nftables=y
-CONFIG_PACKAGE_luci-app-kidcontrol=m
-CONFIG_ALL_NONSHARED=n
-CONFIG_ALL_KMODS=n
-CONFIG_ALL=n
-CONFIG_AUTOREMOVE=y
-EOL
+        echo "CONFIG_TARGET_mediatek=y" >> .config
+        echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
+        echo "CONFIG_TARGET_mediatek_filogic_${{ env.SUBTARGET }}=y" >> .config
+        echo "CONFIG_TARGET_mediatek_filogic_${{ env.SUBTARGET }}_360t7=y" >> .config
+        echo "CONFIG_PACKAGE_luci=y" >> .config
+        echo "CONFIG_PACKAGE_nftables=y" >> .config
+        echo "CONFIG_PACKAGE_${{ env.PACKAGE_NAME }}=m" >> .config
+        echo "CONFIG_ALL_NONSHARED=n" >> .config
+        echo "CONFIG_ALL_KMODS=n" >> .config
+        echo "CONFIG_ALL=n" >> .config
+        echo "CONFIG_AUTOREMOVE=y" >> .config
         
         make defconfig
 
@@ -111,12 +109,7 @@ EOL
         echo "Building with simplified approach..."
         
         # 方法1：尝试直接编译我们的包（让make自动处理依赖）
-        make package/network/services/${{ env.PACKAGE_NAME }}/compile V=s -j1 || \
-        # 方法2：如果失败，尝试先编译依赖
-        (echo "Direct compile failed, trying dependency-first approach..." && \
-         make package/nftables/compile -j1 V=s && \
-         make package/luci/compile -j1 V=s && \
-         make package/network/services/${{ env.PACKAGE_NAME }}/compile V=s -j1)
+        make package/network/services/${{ env.PACKAGE_NAME }}/compile V=s -j1
 
     - name: Alternative build method
       if: failure()
@@ -137,23 +130,21 @@ EOL
         echo "Searching for IPK files..."
         
         # 在多个可能的位置查找
-        IPK_PATHS=(
-          "bin/packages/*/${{ env.PACKAGE_NAME }}*.ipk"
-          "bin/targets/*/packages/${{ env.PACKAGE_NAME }}*.ipk"
-          "bin/*/packages/*/${{ env.PACKAGE_NAME }}*.ipk"
-        )
+        IPK_FILE=$(find bin -name "*${{ env.PACKAGE_NAME }}*.ipk" | head -n 1)
         
-        for pattern in "${IPK_PATHS[@]}"; do
-          IPK_FILE=$(find . -path "$pattern" 2>/dev/null | head -n 1)
-          if [ -n "$IPK_FILE" ] && [ -f "$IPK_FILE" ]; then
-            echo "✅ Found: $IPK_FILE"
-            mkdir -p $GITHUB_WORKSPACE/output
-            cp "$IPK_FILE" $GITHUB_WORKSPACE/output/
-            break
-          fi
-        done
+        if [ -z "$IPK_FILE" ]; then
+          IPK_FILE=$(find bin/packages -name "*${{ env.PACKAGE_NAME }}*.ipk" | head -n 1)
+        fi
         
-        if [ ! -f "$GITHUB_WORKSPACE/output/"*.ipk ]; then
+        if [ -z "$IPK_FILE" ]; then
+          IPK_FILE=$(find bin/targets -name "*${{ env.PACKAGE_NAME }}*.ipk" | head -n 1)
+        fi
+        
+        if [ -f "$IPK_FILE" ]; then
+          echo "✅ Found: $IPK_FILE"
+          mkdir -p $GITHUB_WORKSPACE/output
+          cp "$IPK_FILE" $GITHUB_WORKSPACE/output/
+        else
           echo "❌ No IPK file found"
           echo "Searching all IPK files:"
           find . -name "*.ipk" | head -20
@@ -168,7 +159,7 @@ EOL
 
     - name: Show build result
       run: |
-        if [ -f "$GITHUB_WORKSPACE/output/"*.ipk ]; then
+        if ls $GITHUB_WORKSPACE/output/*.ipk 1> /dev/null 2>&1; then
           echo "=========================================="
           echo "✅ Build successful!"
           echo "📦 Package: ${{ env.PACKAGE_NAME }}"
