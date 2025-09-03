@@ -59,16 +59,14 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
         
-        # 基础配置
-        cat > .config << EOF
-CONFIG_TARGET_mediatek=y
-CONFIG_TARGET_mediatek_filogic=y
-CONFIG_TARGET_mediatek_filogic_${{ env.SUBTARGET }}=y
-CONFIG_TARGET_mediatek_filogic_${{ env.SUBTARGET }}_360t7=y
-CONFIG_PACKAGE_luci=y
-CONFIG_PACKAGE_nftables=y
-CONFIG_PACKAGE_${{ env.PACKAGE_NAME }}=m
-EOF
+        # 基础配置 - 使用单独的命令行方式
+        echo "CONFIG_TARGET_mediatek=y" >> .config
+        echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
+        echo "CONFIG_TARGET_mediatek_filogic_${{ env.SUBTARGET }}=y" >> .config
+        echo "CONFIG_TARGET_mediatek_filogic_${{ env.SUBTARGET }}_360t7=y" >> .config
+        echo "CONFIG_PACKAGE_luci=y" >> .config
+        echo "CONFIG_PACKAGE_nftables=y" >> .config
+        echo "CONFIG_PACKAGE_${{ env.PACKAGE_NAME }}=m" >> .config
         
         make defconfig
 
