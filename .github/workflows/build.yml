@@ -21,6 +21,8 @@ jobs:
     steps:
     - name: Checkout source code
       uses: actions/checkout@v4
+      with:
+        path: source-code  # 明确指定检出路径
 
     - name: Install build dependencies
       run: |
@@ -53,54 +55,53 @@ jobs:
         cd openwrt-source
         git checkout v${{ env.OPENWRT_VERSION }}
 
-    - name: Setup feeds and basic config
-      run: |
-        cd openwrt-source
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
-        
-        # 基础配置
-        echo "CONFIG_TARGET_mediatek=y" >> .config
-        echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
-        echo "CONFIG_TARGET_mediatek_filogic_${{ env.SUBTARGET }}=y" >> .config
-        echo "CONFIG_TARGET_mediatek_filogic_${{ env.SUBTARGET }}_360t7=y" >> .config
-        echo "CONFIG_PACKAGE_luci=y" >> .config
-        echo "CONFIG_PACKAGE_nftables=y" >> .config
-        echo "CONFIG_PACKAGE_${{ env.PACKAGE_NAME }}=m" >> .config
-        
-        make defconfig
-
     - name: Debug directory structure
       run: |
         echo "Current workspace: $GITHUB_WORKSPACE"
         echo "Directory structure:"
         pwd
         ls -la
-        echo "Kidcontrol directory:"
-        ls -la kidcontrol/ || echo "No kidcontrol directory"
-        echo "Package directory:"
-        ls -la kidcontrol/luci-app-kidcontrol/ || echo "No package directory"
+        echo "Source code directory:"
+        ls -la source-code/ || echo "No source-code directory"
 
-    - name: Copy package from correct path
+    - name: Find and copy package files
       run: |
+        # 在检出目录中查找包文件
         cd $GITHUB_WORKSPACE
         
-        echo "Checking if package directory exists:"
-        if [ -d "kidcontrol/luci-app-kidcontrol" ]; then
-          echo "✅ Package directory found"
-          ls -la kidcontrol/luci-app-kidcontrol/
+        # 查找Makefile文件
+        MAKEFILE_PATH=$(find . -name "Makefile" -path "*/luci-app-kidcontrol/*" | head -n 1)
+        
+        if [ -n "$MAKEFILE_PATH" ]; then
+          echo "✅ Found Makefile at: $MAKEFILE_PATH"
+          # 提取包目录路径
+          PACKAGE_DIR=$(dirname "$MAKEFILE_PATH")
+          echo "Package directory: $PACKAGE_DIR"
+          
+          # 创建目标目录
+          mkdir -p openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}
+          
+          # 复制所有文件
+          cp -r "$PACKAGE_DIR"/* openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/
+          
+          echo "✅ Files copied successfully"
         else
-          echo "❌ Package directory not found!"
-          exit 1
+          echo "❌ Makefile not found in luci-app-kidcontrol directory!"
+          echo "Searching for any Makefile:"
+          find . -name "Makefile" | head -10
+          echo "Trying alternative approach..."
+          
+          # 尝试直接复制整个source-code目录的内容
+          if [ -d "source-code" ]; then
+            mkdir -p openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}
+            cp -r source-code/* openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/
+            echo "✅ Copied all files from source-code directory"
+          else
+            echo "❌ No source-code directory found!"
+            exit 1
+          fi
         fi
         
-        # 创建目标目录
-        mkdir -p openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}
-        
-        # 复制所有文件从正确的路径
-        cp -r kidcontrol/luci-app-kidcontrol/* openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/
-        
-        echo "✅ Files copied successfully"
         echo "Target directory contents:"
         ls -la openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/
 
@@ -114,8 +115,25 @@ jobs:
           exit 1
         fi
         echo "✅ Makefile found and verified"
-        echo "Makefile content:"
-        head -10 Makefile
+        echo "Makefile first few lines:"
+        head -5 Makefile
+
+    - name: Setup feeds and basic config
+      run: |
+        cd $GITHUB_WORKSPACE/openwrt-source
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+        
+        # 基础配置
+        echo "CONFIG_TARGET_mediatek=y" >> .config
+        echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
+        echo "CONFIG_TARGET_mediatek_filogic_${{ env.SUBTARGET }}=y" >> .config
+        echo "CONFIG_TARGET_mediatek_filogic_${{ env.SUBTARGET }}_360t7=y" >> .config
+        echo "CONFIG_PACKAGE_luci=y" >> .config
+        echo "CONFIG_PACKAGE_nftables=y" >> .config
+        echo "CONFIG_PACKAGE_${{ env.PACKAGE_NAME }}=m" >> .config
+        
+        make defconfig
 
     - name: Download sources
       run: |
@@ -145,11 +163,9 @@ jobs:
         cd $GITHUB_WORKSPACE/openwrt-source
         echo "Searching for IPK files..."
         
-        # 在主包目录查找
         IPK_FILE=$(find bin -name "*${{ env.PACKAGE_NAME }}*.ipk" | head -n 1)
         
         if [ -z "$IPK_FILE" ]; then
-          # 在packages目录查找
           IPK_FILE=$(find bin/packages -name "*${{ env.PACKAGE_NAME }}*.ipk" | head -n 1)
         fi
         
@@ -157,17 +173,9 @@ jobs:
           echo "✅ Found: $IPK_FILE"
           mkdir -p $GITHUB_WORKSPACE/output
           cp "$IPK_FILE" $GITHUB_WORKSPACE/output/
-          
-          # 同时复制nftables的依赖包（如果需要）
-          NFTABLES_IPK=$(find bin -name "*nftables*.ipk" | head -n 1)
-          if [ -f "$NFTABLES_IPK" ]; then
-            cp "$NFTABLES_IPK" $GITHUB_WORKSPACE/output/
-            echo "Also copied nftables dependency"
-          fi
         else
           echo "❌ IPK file not found"
-          echo "Available IPK files:"
-          find . -name "*.ipk" | head -20
+          find . -name "*.ipk" | head -10
           exit 1
         fi
 
@@ -183,6 +191,5 @@ jobs:
         echo "✅ Build successful!"
         echo "📦 Package: ${{ env.PACKAGE_NAME }}"
         echo "🎯 For: 360T7 (MT7981)"
-        echo "📋 Dependencies: nftables"
-        echo "📁 IPK files are available in artifacts"
+        echo "📁 IPK file available in artifacts"
         echo "=========================================="
