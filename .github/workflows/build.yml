@@ -1,4 +1,4 @@
-name: Build luci-app-kidcontrol
+name: Build luci-app-kidcontrol for 360T7
 
 on:
   push:
@@ -9,20 +9,16 @@ on:
 
 env:
   PACKAGE_NAME: luci-app-kidcontrol
-  OPENWRT_VERSION: "24.10.1"
-  TARGET: "mediatek/filogic"
-  SUBTARGET: "mt7981"
+  TARGET_ARCH: "aarch64_cortex-a53"  # 360T7的架构
 
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 60
 
     steps:
     - name: Checkout source code
       uses: actions/checkout@v4
-      with:
-        path: source-code
 
     - name: Install build dependencies
       run: |
@@ -46,127 +42,123 @@ jobs:
           zlib1g-dev \
           file \
           wget \
-          curl \
-          subversion
+          curl
 
-    - name: Clone OpenWrt source
+    - name: Download OpenWrt SDK for 360T7
       run: |
-        git clone https://github.com/openwrt/openwrt.git openwrt-source
-        cd openwrt-source
-        git checkout v${{ env.OPENWRT_VERSION }}
-
-    - name: Copy package files
-      run: |
-        cd $GITHUB_WORKSPACE
-        # 查找并复制包文件
-        if [ -d "source-code" ]; then
-          mkdir -p openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}
-          cp -r source-code/* openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/
-          echo "✅ Files copied from source-code/"
-        else
-          # 备用方案：直接使用当前目录
-          mkdir -p openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}
-          cp -r * openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/
-          echo "✅ Files copied from workspace root"
+        # 360T7 (MT7981) 可用的SDK链接
+        # 尝试多个版本和镜像源
+        
+        SDK_URLS=(
+          "https://downloads.openwrt.org/releases/23.05.3/targets/mediatek/filogic/openwrt-sdk-23.05.3-mediatek-filogic_gcc-12.3.0_musl.Linux-x86_64.tar.xz"
+          "https://mirror-03.infra.openwrt.org/releases/23.05.3/targets/mediatek/filogic/openwrt-sdk-23.05.3-mediatek-filogic_gcc-12.3.0_musl.Linux-x86_64.tar.xz"
+          "https://downloads.openwrt.org/snapshots/targets/mediatek/filogic/openwrt-sdk-mediatek-filogic_gcc-12.3.0_musl.Linux-x86_64.tar.xz"
+        )
+        
+        for SDK_URL in "${SDK_URLS[@]}"; do
+          echo "Trying: $SDK_URL"
+          if wget --timeout=30 --tries=2 "$SDK_URL" -O sdk.tar.xz; then
+            echo "✅ SDK downloaded successfully"
+            echo "SDK_URL=$SDK_URL" >> $GITHUB_ENV
+            break
+          else
+            echo "❌ Download failed, trying next..."
+            rm -f sdk.tar.xz
+          fi
+        done
+        
+        if [ ! -f "sdk.tar.xz" ]; then
+          echo "❌ All SDK downloads failed"
+          exit 1
         fi
+        
+        # 解压SDK
+        tar -xf sdk.tar.xz
+        SDK_DIR=$(tar -tf sdk.tar.xz | head -1 | cut -f1 -d"/")
+        mv "$SDK_DIR" openwrt-sdk
+        rm -f sdk.tar.xz
+        echo "SDK extracted to: openwrt-sdk"
+
+    - name: Prepare package in SDK
+      run: |
+        cd openwrt-sdk
+        echo "SDK structure:"
+        ls -la
+        
+        # 创建包目录
+        mkdir -p package/network/services/${{ env.PACKAGE_NAME }}
+        
+        # 复制所有文件
+        cp -r $GITHUB_WORKSPACE/* package/network/services/${{ env.PACKAGE_NAME }}/
+        
+        # 清理不必要的文件
+        cd package/network/services/${{ env.PACKAGE_NAME }}
+        rm -rf .git .github .gitignore 2>/dev/null || true
         
         echo "Package contents:"
-        ls -la openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/
+        ls -la
 
-    - name: Setup minimal configuration
+    - name: Update feeds
       run: |
-        cd $GITHUB_WORKSPACE/openwrt-source
+        cd openwrt-sdk
         ./scripts/feeds update -a
         ./scripts/feeds install -a
-        
-        # 最小化配置，避免编译不必要的包
-        echo "CONFIG_TARGET_mediatek=y" >> .config
-        echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
-        echo "CONFIG_TARGET_mediatek_filogic_${{ env.SUBTARGET }}=y" >> .config
-        echo "CONFIG_TARGET_mediatek_filogic_${{ env.SUBTARGET }}_360t7=y" >> .config
-        echo "CONFIG_PACKAGE_luci=y" >> .config
-        echo "CONFIG_PACKAGE_nftables=y" >> .config
-        echo "CONFIG_PACKAGE_${{ env.PACKAGE_NAME }}=m" >> .config
-        echo "CONFIG_ALL_NONSHARED=n" >> .config
-        echo "CONFIG_ALL_KMODS=n" >> .config
-        echo "CONFIG_ALL=n" >> .config
-        echo "CONFIG_AUTOREMOVE=y" >> .config
-        
+
+    - name: Configure for package build
+      run: |
+        cd openwrt-sdk
+        # 生成默认配置
         make defconfig
-
-    - name: Download only required sources
-      run: |
-        cd $GITHUB_WORKSPACE/openwrt-source
-        # 只下载必要的包，避免编译整个系统
-        make toolchain/install -j$(nproc)
-        make package/nftables/download
-        make package/luci/download
-        make package/network/services/${{ env.PACKAGE_NAME }}/download
-
-    - name: Build with simplified approach
-      run: |
-        cd $GITHUB_WORKSPACE/openwrt-source
-        echo "Building with simplified approach..."
         
-        # 方法1：尝试直接编译我们的包（让make自动处理依赖）
-        make package/network/services/${{ env.PACKAGE_NAME }}/compile V=s -j1
-
-    - name: Alternative build method
-      if: failure()
-      run: |
-        cd $GITHUB_WORKSPACE/openwrt-source
-        echo "Trying alternative build method..."
+        # 启用我们的包
+        echo "CONFIG_PACKAGE_${{ env.PACKAGE_NAME }}=m" >> .config
+        make defconfig
         
-        # 清除之前的编译结果
-        rm -rf build_dir/target-*/linux-mediatek_filogic/package/network/services/${{ env.PACKAGE_NAME }}
-        
-        # 使用更详细的输出和单线程编译
-        make package/network/services/${{ env.PACKAGE_NAME }}/clean
-        make package/network/services/${{ env.PACKAGE_NAME }}/compile V=sc -j1
+        echo "Configuration:"
+        grep "CONFIG_PACKAGE_${{ env.PACKAGE_NAME }}" .config
 
-    - name: Find compiled package
+    - name: Compile package
       run: |
-        cd $GITHUB_WORKSPACE/openwrt-source
+        cd openwrt-sdk
+        echo "Compiling package..."
+        
+        # 编译包
+        make package/network/services/${{ env.PACKAGE_NAME }}/compile V=s -j$(nproc)
+
+    - name: Find compiled IPK
+      run: |
+        cd openwrt-sdk
         echo "Searching for IPK files..."
         
-        # 在多个可能的位置查找
-        IPK_FILE=$(find bin -name "*${{ env.PACKAGE_NAME }}*.ipk" | head -n 1)
+        # 查找IPK文件
+        IPK_PATH=$(find . -name "*${{ env.PACKAGE_NAME }}*.ipk" | head -n 1)
         
-        if [ -z "$IPK_FILE" ]; then
-          IPK_FILE=$(find bin/packages -name "*${{ env.PACKAGE_NAME }}*.ipk" | head -n 1)
-        fi
-        
-        if [ -z "$IPK_FILE" ]; then
-          IPK_FILE=$(find bin/targets -name "*${{ env.PACKAGE_NAME }}*.ipk" | head -n 1)
-        fi
-        
-        if [ -f "$IPK_FILE" ]; then
-          echo "✅ Found: $IPK_FILE"
+        if [ -f "$IPK_PATH" ]; then
+          echo "✅ Found IPK: $IPK_PATH"
           mkdir -p $GITHUB_WORKSPACE/output
-          cp "$IPK_FILE" $GITHUB_WORKSPACE/output/
+          cp "$IPK_PATH" $GITHUB_WORKSPACE/output/
+          
+          # 显示IPK信息
+          echo "IPK architecture:"
+          ar t "$IPK_PATH" || true
         else
-          echo "❌ No IPK file found"
-          echo "Searching all IPK files:"
-          find . -name "*.ipk" | head -20
+          echo "❌ IPK not found"
+          echo "Available IPK files:"
+          find . -name "*.ipk" | head -10
           exit 1
         fi
 
-    - name: Upload artifacts
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ env.PACKAGE_NAME }}-ipk
+        name: ${{ env.PACKAGE_NAME }}-360t7
         path: output/*.ipk
 
-    - name: Show build result
+    - name: Show success message
       run: |
-        if ls $GITHUB_WORKSPACE/output/*.ipk 1> /dev/null 2>&1; then
-          echo "=========================================="
-          echo "✅ Build successful!"
-          echo "📦 Package: ${{ env.PACKAGE_NAME }}"
-          echo "🎯 For: 360T7 (MT7981)"
-          echo "📁 IPK file available in artifacts"
-          echo "=========================================="
-        else
-          echo "❌ Build failed"
-          exit 1
-        fi
+        echo "=========================================="
+        echo "✅ Build successful for 360T7!"
+        echo "📦 Package: ${{ env.PACKAGE_NAME }}"
+        echo "🎯 Architecture: ${{ env.TARGET_ARCH }}"
+        echo "📁 IPK file available in artifacts"
+        echo "=========================================="
