@@ -1,75 +1,117 @@
-name: Build luci-app-kidcontrol for 360T7
+name: Build luci-app-kidcontrol for 360T7 (mt7981)
 
 on:
   push:
-    branches:
-      - main
-  workflow_dispatch:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch: # 允许手动触发构建
+
+env:
+  PACKAGE_NAME: luci-app-kidcontrol
+  OPENWRT_VERSION: "24.10.1"
+  TARGET: "mediatek/mt7981"
+  # 24.10版本通常有更细分的subtarget，但SDK可能还是以mt7981为主
+  SDK_SUBDIR: "mt7981" 
 
 jobs:
   build:
-    name: Build luci-app-kidcontrol
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 使用较新的ubuntu版本以确保兼容性
 
     steps:
-    - name: Checkout repository
+    - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Install build dependencies
+    - name: Set up build environment
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential libncurses5-dev gawk git gettext libssl-dev xsltproc zlib1g-dev unzip python3 python3-venv file wget
+        sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib gettext git libncurses5-dev libssl-dev python3 python3-distutils rsync unzip zlib1g-dev file wget curl
 
-    - name: Download OpenWrt SDK
+    - name: Determine SDK URL
       run: |
-        SDK_URL="https://downloads.openwrt.org/releases/23.05.3/targets/mediatek/filogic/openwrt-sdk-23.05.3-mediatek-filogic_gcc-12.3.0_musl.Linux-x86_64.tar.xz"
-        wget -q $SDK_URL
-        tar -xf openwrt-sdk-*.tar.xz
-        # 查找解压后的目录并重命名
-        SDK_DIR=$(ls -d openwrt-sdk-* 2>/dev/null | head -n1)
-        if [ -n "$SDK_DIR" ]; then
-            mv "$SDK_DIR" sdk
-            echo "SDK directory renamed to sdk"
+        # 构建24.10.1版本MT7981 SDK的下载链接
+        SDK_FILENAME="openwrt-sdk-24.10.1-mediatek-mt7981_gcc-14.2.0_musl.Linux-x86_64.tar.xz"
+        SDK_URL="https://downloads.openwrt.org/releases/24.10.1/targets/mediatek/mt7981/$SDK_FILENAME"
+        echo "SDK_URL=$SDK_URL" >> $GITHUB_ENV
+        echo "SDK_FILENAME=$SDK_FILENAME" >> $GITHUB_ENV
+        echo "Building for 360T7 (MT7981) with OpenWrt ${{ env.OPENWRT_VERSION }}"
+
+    - name: Download and Extract OpenWrt SDK
+      run: |
+        cd $GITHUB_WORKSPACE
+        echo "Downloading SDK from: ${{ env.SDK_URL }}"
+        wget --progress=dot:giga ${{ env.SDK_URL }} -O sdk.tar.xz
+        mkdir -p openwrt-sdk
+        tar -xf sdk.tar.xz -C openwrt-sdk --strip-components=1
+        rm -f sdk.tar.xz
+        ls -la openwrt-sdk/
+
+    - name: Prepare Package in SDK
+      run: |
+        cd $GITHUB_WORKSPACE/openwrt-sdk
+        # 将整个项目复制到SDK的package目录下
+        mkdir -p package/${{ env.PACKAGE_NAME }}
+        cp -r $GITHUB_WORKSPACE/* package/${{ env.PACKAGE_NAME }}/
+        # 清理不必要的文件
+        rm -rf package/${{ env.PACKAGE_NAME }}/openwrt-sdk 2>/dev/null || true
+
+    - name: Update Feeds
+      run: |
+        cd $GITHUB_WORKSPACE/openwrt-sdk
+        ./scripts/feeds update -a
+
+    - name: Configure SDK
+      run: |
+        cd $GITHUB_WORKSPACE/openwrt-sdk
+        # 生成默认配置
+        make defconfig
+        # 确保我们的包被编译为模块
+        echo "CONFIG_PACKAGE_${{ env.PACKAGE_NAME }}=m" >> .config
+        # 应用配置
+        make defconfig
+        echo "Current configuration for our package:"
+        grep "CONFIG_PACKAGE_${{ env.PACKAGE_NAME }}" .config || echo "Package not in config yet"
+
+    - name: Compile the Package
+      run: |
+        cd $GITHUB_WORKSPACE/openwrt-sdk
+        # 编译特定包 - 使用较简洁的输出
+        make package/${{ env.PACKAGE_NAME }}/compile -j$(nproc)
+        # 如果上面失败，可以尝试详细模式排查问题
+        # make package/${{ env.PACKAGE_NAME }}/compile V=s
+
+    - name: Find Compiled Package
+      run: |
+        cd $GITHUB_WORKSPACE/openwrt-sdk
+        # 查找生成的ipk文件
+        IPK_PATH=$(find bin -name "*${{ env.PACKAGE_NAME }}*.ipk" | head -n 1)
+        if [ -f "$IPK_PATH" ]; then
+          echo "Found IPK: $IPK_PATH"
+          echo "PACKAGE_PATH=$IPK_PATH" >> $GITHUB_ENV
+          echo "IPK_FILENAME=$(basename $IPK_PATH)" >> $GITHUB_ENV
+          # 复制到工作区根目录方便上传
+          mkdir -p $GITHUB_WORKSPACE/output
+          cp $IPK_PATH $GITHUB_WORKSPACE/output/
         else
-            echo "Error: Could not find SDK directory"
-            ls -la
-            exit 1
+          echo "Error: IPK file not found!"
+          echo "Checking build directories..."
+          find . -name "*.ipk" | head -10
+          exit 1
         fi
 
-    - name: Copy package to SDK
-      run: |
-        mkdir -p sdk/package/luci-app-kidcontrol
-        cp -r luci-app-kidcontrol/* sdk/package/luci-app-kidcontrol/
-        echo "Package files copied:"
-        ls -la sdk/package/luci-app-kidcontrol/
-
-    - name: Build the package
-      run: |
-        cd sdk
-        make package/luci-app-kidcontrol/compile V=s
-
-    - name: Find and prepare IPK file
-      run: |
-        cd sdk
-        IPK_FILE=$(find bin -name "luci-app-kidcontrol*.ipk" | head -n1)
-        if [ -f "$IPK_FILE" ]; then
-            echo "IPK_FILE=$IPK_FILE" >> $GITHUB_ENV
-            mkdir -p ../output
-            cp "$IPK_FILE" ../output/
-        else
-            echo "IPK file not found!"
-            find bin -name "*.ipk" | head -10
-            exit 1
-        fi
-
-    - name: Upload IPK artifact
+    - name: Upload IPK as Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: luci-app-kidcontrol-ipk
-        path: output/*.ipk
+        name: ${{ env.PACKAGE_NAME }}-${{ env.OPENWRT_VERSION }}-mt7981
+        path: $GITHUB_WORKSPACE/output/*.ipk
 
-    - name: Show build result
+    - name: Show Build Success
       run: |
-        echo "Build completed successfully!"
-        echo "IPK file: ${{ env.IPK_FILE }}"
+        echo "=========================================="
+        echo "Build successful! 🎉"
+        echo "Package: ${{ env.PACKAGE_NAME }}"
+        echo "OpenWrt: ${{ env.OPENWRT_VERSION }}"
+        echo "Target: ${{ env.TARGET }}"
+        echo "IPK: ${{ env.IPK_FILENAME }}"
+        echo "=========================================="
