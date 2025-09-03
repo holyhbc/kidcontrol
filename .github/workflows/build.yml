@@ -16,13 +16,13 @@ env:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     steps:
     - name: Checkout source code
       uses: actions/checkout@v4
       with:
-        path: source-code  # 明确指定检出路径
+        path: source-code
 
     - name: Install build dependencies
       run: |
@@ -55,127 +55,108 @@ jobs:
         cd openwrt-source
         git checkout v${{ env.OPENWRT_VERSION }}
 
-    - name: Debug directory structure
+    - name: Copy package files
       run: |
-        echo "Current workspace: $GITHUB_WORKSPACE"
-        echo "Directory structure:"
-        pwd
-        ls -la
-        echo "Source code directory:"
-        ls -la source-code/ || echo "No source-code directory"
-
-    - name: Find and copy package files
-      run: |
-        # 在检出目录中查找包文件
         cd $GITHUB_WORKSPACE
-        
-        # 查找Makefile文件
-        MAKEFILE_PATH=$(find . -name "Makefile" -path "*/luci-app-kidcontrol/*" | head -n 1)
-        
-        if [ -n "$MAKEFILE_PATH" ]; then
-          echo "✅ Found Makefile at: $MAKEFILE_PATH"
-          # 提取包目录路径
-          PACKAGE_DIR=$(dirname "$MAKEFILE_PATH")
-          echo "Package directory: $PACKAGE_DIR"
-          
-          # 创建目标目录
+        # 查找并复制包文件
+        if [ -d "source-code" ]; then
           mkdir -p openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}
-          
-          # 复制所有文件
-          cp -r "$PACKAGE_DIR"/* openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/
-          
-          echo "✅ Files copied successfully"
+          cp -r source-code/* openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/
+          echo "✅ Files copied from source-code/"
         else
-          echo "❌ Makefile not found in luci-app-kidcontrol directory!"
-          echo "Searching for any Makefile:"
-          find . -name "Makefile" | head -10
-          echo "Trying alternative approach..."
-          
-          # 尝试直接复制整个source-code目录的内容
-          if [ -d "source-code" ]; then
-            mkdir -p openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}
-            cp -r source-code/* openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/
-            echo "✅ Copied all files from source-code directory"
-          else
-            echo "❌ No source-code directory found!"
-            exit 1
-          fi
+          # 备用方案：直接使用当前目录
+          mkdir -p openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}
+          cp -r * openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/
+          echo "✅ Files copied from workspace root"
         fi
         
-        echo "Target directory contents:"
+        echo "Package contents:"
         ls -la openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/
 
-    - name: Verify Makefile exists
-      run: |
-        cd $GITHUB_WORKSPACE/openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}
-        if [ ! -f "Makefile" ]; then
-          echo "❌ Error: Makefile not found in package directory!"
-          echo "Current directory: $(pwd)"
-          ls -la
-          exit 1
-        fi
-        echo "✅ Makefile found and verified"
-        echo "Makefile first few lines:"
-        head -5 Makefile
-
-    - name: Setup feeds and basic config
+    - name: Setup minimal configuration
       run: |
         cd $GITHUB_WORKSPACE/openwrt-source
         ./scripts/feeds update -a
         ./scripts/feeds install -a
         
-        # 基础配置
-        echo "CONFIG_TARGET_mediatek=y" >> .config
-        echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
-        echo "CONFIG_TARGET_mediatek_filogic_${{ env.SUBTARGET }}=y" >> .config
-        echo "CONFIG_TARGET_mediatek_filogic_${{ env.SUBTARGET }}_360t7=y" >> .config
-        echo "CONFIG_PACKAGE_luci=y" >> .config
-        echo "CONFIG_PACKAGE_nftables=y" >> .config
-        echo "CONFIG_PACKAGE_${{ env.PACKAGE_NAME }}=m" >> .config
+        # 最小化配置，避免编译不必要的包
+        cat > .config << 'EOL'
+CONFIG_TARGET_mediatek=y
+CONFIG_TARGET_mediatek_filogic=y
+CONFIG_TARGET_mediatek_filogic_mt7981=y
+CONFIG_TARGET_mediatek_filogic_mt7981_360t7=y
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_nftables=y
+CONFIG_PACKAGE_luci-app-kidcontrol=m
+CONFIG_ALL_NONSHARED=n
+CONFIG_ALL_KMODS=n
+CONFIG_ALL=n
+CONFIG_AUTOREMOVE=y
+EOL
         
         make defconfig
 
-    - name: Download sources
+    - name: Download only required sources
       run: |
         cd $GITHUB_WORKSPACE/openwrt-source
-        make download -j$(nproc)
-
-    - name: Build only the required package
-      run: |
-        cd $GITHUB_WORKSPACE/openwrt-source
-        echo "Compiling ${{ env.PACKAGE_NAME }} and dependencies..."
-        
-        # 只编译必要的工具链和依赖
-        make tools/install -j$(nproc)
+        # 只下载必要的包，避免编译整个系统
         make toolchain/install -j$(nproc)
-        
-        # 编译nftables依赖
-        make package/nftables/compile -j$(nproc)
-        
-        # 编译LuCI基础
-        make package/luci/compile -j$(nproc)
-        
-        # 编译我们的包
-        make package/network/services/${{ env.PACKAGE_NAME }}/compile V=s -j$(nproc)
+        make package/nftables/download
+        make package/luci/download
+        make package/network/services/${{ env.PACKAGE_NAME }}/download
 
-    - name: Find and collect IPK files
+    - name: Build with simplified approach
+      run: |
+        cd $GITHUB_WORKSPACE/openwrt-source
+        echo "Building with simplified approach..."
+        
+        # 方法1：尝试直接编译我们的包（让make自动处理依赖）
+        make package/network/services/${{ env.PACKAGE_NAME }}/compile V=s -j1 || \
+        # 方法2：如果失败，尝试先编译依赖
+        (echo "Direct compile failed, trying dependency-first approach..." && \
+         make package/nftables/compile -j1 V=s && \
+         make package/luci/compile -j1 V=s && \
+         make package/network/services/${{ env.PACKAGE_NAME }}/compile V=s -j1)
+
+    - name: Alternative build method
+      if: failure()
+      run: |
+        cd $GITHUB_WORKSPACE/openwrt-source
+        echo "Trying alternative build method..."
+        
+        # 清除之前的编译结果
+        rm -rf build_dir/target-*/linux-mediatek_filogic/package/network/services/${{ env.PACKAGE_NAME }}
+        
+        # 使用更详细的输出和单线程编译
+        make package/network/services/${{ env.PACKAGE_NAME }}/clean
+        make package/network/services/${{ env.PACKAGE_NAME }}/compile V=sc -j1
+
+    - name: Find compiled package
       run: |
         cd $GITHUB_WORKSPACE/openwrt-source
         echo "Searching for IPK files..."
         
-        IPK_FILE=$(find bin -name "*${{ env.PACKAGE_NAME }}*.ipk" | head -n 1)
+        # 在多个可能的位置查找
+        IPK_PATHS=(
+          "bin/packages/*/${{ env.PACKAGE_NAME }}*.ipk"
+          "bin/targets/*/packages/${{ env.PACKAGE_NAME }}*.ipk"
+          "bin/*/packages/*/${{ env.PACKAGE_NAME }}*.ipk"
+        )
         
-        if [ -z "$IPK_FILE" ]; then
-          IPK_FILE=$(find bin/packages -name "*${{ env.PACKAGE_NAME }}*.ipk" | head -n 1)
-        fi
+        for pattern in "${IPK_PATHS[@]}"; do
+          IPK_FILE=$(find . -path "$pattern" 2>/dev/null | head -n 1)
+          if [ -n "$IPK_FILE" ] && [ -f "$IPK_FILE" ]; then
+            echo "✅ Found: $IPK_FILE"
+            mkdir -p $GITHUB_WORKSPACE/output
+            cp "$IPK_FILE" $GITHUB_WORKSPACE/output/
+            break
+          fi
+        done
         
-        if [ -f "$IPK_FILE" ]; then
-          echo "✅ Found: $IPK_FILE"
-          mkdir -p $GITHUB_WORKSPACE/output
-          cp "$IPK_FILE" $GITHUB_WORKSPACE/output/
-        else
-          echo "❌ IPK file not found"
-          find . -name "*.ipk" | head -10
+        if [ ! -f "$GITHUB_WORKSPACE/output/"*.ipk ]; then
+          echo "❌ No IPK file found"
+          echo "Searching all IPK files:"
+          find . -name "*.ipk" | head -20
           exit 1
         fi
 
@@ -185,11 +166,16 @@ jobs:
         name: ${{ env.PACKAGE_NAME }}-ipk
         path: output/*.ipk
 
-    - name: Show success message
+    - name: Show build result
       run: |
-        echo "=========================================="
-        echo "✅ Build successful!"
-        echo "📦 Package: ${{ env.PACKAGE_NAME }}"
-        echo "🎯 For: 360T7 (MT7981)"
-        echo "📁 IPK file available in artifacts"
-        echo "=========================================="
+        if [ -f "$GITHUB_WORKSPACE/output/"*.ipk ]; then
+          echo "=========================================="
+          echo "✅ Build successful!"
+          echo "📦 Package: ${{ env.PACKAGE_NAME }}"
+          echo "🎯 For: 360T7 (MT7981)"
+          echo "📁 IPK file available in artifacts"
+          echo "=========================================="
+        else
+          echo "❌ Build failed"
+          exit 1
+        fi
