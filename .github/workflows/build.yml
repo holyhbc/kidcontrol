@@ -9,7 +9,7 @@ on:
 
 env:
   PACKAGE_NAME: luci-app-kidcontrol
-  TARGET_ARCH: "aarch64_cortex-a53"  # 360T7的架构
+  TARGET_ARCH: "aarch64_cortex-a53"
 
 jobs:
   build:
@@ -46,30 +46,17 @@ jobs:
 
     - name: Download OpenWrt SDK for 360T7
       run: |
-        # 360T7 (MT7981) 可用的SDK链接
-        # 尝试多个版本和镜像源
+        # 使用23.05.3稳定版SDK
+        SDK_URL="https://downloads.openwrt.org/releases/23.05.3/targets/mediatek/filogic/openwrt-sdk-23.05.3-mediatek-filogic_gcc-12.3.0_musl.Linux-x86_64.tar.xz"
         
-        SDK_URLS=(
-          "https://downloads.openwrt.org/releases/23.05.3/targets/mediatek/filogic/openwrt-sdk-23.05.3-mediatek-filogic_gcc-12.3.0_musl.Linux-x86_64.tar.xz"
-          "https://mirror-03.infra.openwrt.org/releases/23.05.3/targets/mediatek/filogic/openwrt-sdk-23.05.3-mediatek-filogic_gcc-12.3.0_musl.Linux-x86_64.tar.xz"
-          "https://downloads.openwrt.org/snapshots/targets/mediatek/filogic/openwrt-sdk-mediatek-filogic_gcc-12.3.0_musl.Linux-x86_64.tar.xz"
-        )
-        
-        for SDK_URL in "${SDK_URLS[@]}"; do
-          echo "Trying: $SDK_URL"
-          if wget --timeout=30 --tries=2 "$SDK_URL" -O sdk.tar.xz; then
-            echo "✅ SDK downloaded successfully"
-            echo "SDK_URL=$SDK_URL" >> $GITHUB_ENV
-            break
-          else
-            echo "❌ Download failed, trying next..."
-            rm -f sdk.tar.xz
-          fi
-        done
-        
-        if [ ! -f "sdk.tar.xz" ]; then
-          echo "❌ All SDK downloads failed"
-          exit 1
+        echo "Downloading SDK: $SDK_URL"
+        if wget --timeout=30 --tries=3 "$SDK_URL" -O sdk.tar.xz; then
+          echo "✅ SDK downloaded successfully"
+        else
+          echo "❌ SDK download failed, trying mirror..."
+          # 尝试镜像站
+          MIRROR_URL="https://mirror-03.infra.openwrt.org/releases/23.05.3/targets/mediatek/filogic/openwrt-sdk-23.05.3-mediatek-filogic_gcc-12.3.0_musl.Linux-x86_64.tar.xz"
+          wget "$MIRROR_URL" -O sdk.tar.xz || exit 1
         fi
         
         # 解压SDK
@@ -77,26 +64,58 @@ jobs:
         SDK_DIR=$(tar -tf sdk.tar.xz | head -1 | cut -f1 -d"/")
         mv "$SDK_DIR" openwrt-sdk
         rm -f sdk.tar.xz
-        echo "SDK extracted to: openwrt-sdk"
+        echo "SDK ready"
 
-    - name: Prepare package in SDK
+    - name: Prepare package files
       run: |
-        cd openwrt-sdk
-        echo "SDK structure:"
+        # 首先列出当前目录内容
+        echo "Current directory contents:"
+        pwd
         ls -la
         
-        # 创建包目录
-        mkdir -p package/network/services/${{ env.PACKAGE_NAME }}
+        # 创建目标目录
+        mkdir -p openwrt-sdk/package/network/services/${{ env.PACKAGE_NAME }}
         
-        # 复制所有文件
-        cp -r $GITHUB_WORKSPACE/* package/network/services/${{ env.PACKAGE_NAME }}/
+        # 精确复制文件，避免循环复制
+        echo "Copying specific files..."
         
-        # 清理不必要的文件
-        cd package/network/services/${{ env.PACKAGE_NAME }}
-        rm -rf .git .github .gitignore 2>/dev/null || true
+        # 复制Makefile（必须）
+        if [ -f "Makefile" ]; then
+          cp Makefile openwrt-sdk/package/network/services/${{ env.PACKAGE_NAME }}/
+          echo "✅ Copied Makefile"
+        fi
         
-        echo "Package contents:"
-        ls -la
+        # 复制其他常见文件
+        for file in README.md LICENSE Changelog *.mk; do
+          if [ -f "$file" ]; then
+            cp "$file" openwrt-sdk/package/network/services/${{ env.PACKAGE_NAME }}/
+            echo "✅ Copied $file"
+          fi
+        done
+        
+        # 复制目录
+        for dir in src root test luasrc; do
+          if [ -d "$dir" ]; then
+            cp -r "$dir" openwrt-sdk/package/network/services/${{ env.PACKAGE_NAME }}/
+            echo "✅ Copied directory: $dir"
+          fi
+        done
+        
+        echo "Final package contents:"
+        ls -la openwrt-sdk/package/network/services/${{ env.PACKAGE_NAME }}/
+
+    - name: Verify Makefile
+      run: |
+        cd openwrt-sdk/package/network/services/${{ env.PACKAGE_NAME }}
+        if [ ! -f "Makefile" ]; then
+          echo "❌ Error: Makefile not found!"
+          echo "Current directory: $(pwd)"
+          ls -la
+          exit 1
+        fi
+        echo "✅ Makefile verified"
+        echo "Makefile content:"
+        cat Makefile
 
     - name: Update feeds
       run: |
@@ -104,46 +123,45 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Configure for package build
+    - name: Configure build
       run: |
         cd openwrt-sdk
-        # 生成默认配置
         make defconfig
-        
-        # 启用我们的包
         echo "CONFIG_PACKAGE_${{ env.PACKAGE_NAME }}=m" >> .config
         make defconfig
-        
-        echo "Configuration:"
-        grep "CONFIG_PACKAGE_${{ env.PACKAGE_NAME }}" .config
+        echo "Build configured"
 
     - name: Compile package
       run: |
         cd openwrt-sdk
-        echo "Compiling package..."
-        
-        # 编译包
+        echo "Starting compilation..."
         make package/network/services/${{ env.PACKAGE_NAME }}/compile V=s -j$(nproc)
 
-    - name: Find compiled IPK
+    - name: Find and collect IPK
       run: |
         cd openwrt-sdk
-        echo "Searching for IPK files..."
+        echo "Searching for IPK file..."
         
-        # 查找IPK文件
-        IPK_PATH=$(find . -name "*${{ env.PACKAGE_NAME }}*.ipk" | head -n 1)
+        # 在多个位置查找
+        IPK_LOCATIONS=(
+          "bin/packages/*/${{ env.PACKAGE_NAME }}*.ipk"
+          "bin/targets/*/packages/${{ env.PACKAGE_NAME }}*.ipk"
+          "bin/*/packages/*/${{ env.PACKAGE_NAME }}*.ipk"
+        )
         
-        if [ -f "$IPK_PATH" ]; then
-          echo "✅ Found IPK: $IPK_PATH"
-          mkdir -p $GITHUB_WORKSPACE/output
-          cp "$IPK_PATH" $GITHUB_WORKSPACE/output/
-          
-          # 显示IPK信息
-          echo "IPK architecture:"
-          ar t "$IPK_PATH" || true
-        else
+        for pattern in "${IPK_LOCATIONS[@]}"; do
+          IPK_FILE=$(find . -path "$pattern" 2>/dev/null | head -n 1)
+          if [ -f "$IPK_FILE" ]; then
+            echo "✅ Found IPK: $IPK_FILE"
+            mkdir -p ../output
+            cp "$IPK_FILE" ../output/
+            break
+          fi
+        done
+        
+        if [ ! -f "../output/"*.ipk ]; then
           echo "❌ IPK not found"
-          echo "Available IPK files:"
+          echo "All files in bin directory:"
           find . -name "*.ipk" | head -10
           exit 1
         fi
@@ -154,11 +172,11 @@ jobs:
         name: ${{ env.PACKAGE_NAME }}-360t7
         path: output/*.ipk
 
-    - name: Show success message
+    - name: Show success
       run: |
         echo "=========================================="
-        echo "✅ Build successful for 360T7!"
+        echo "✅ Build completed successfully!"
         echo "📦 Package: ${{ env.PACKAGE_NAME }}"
-        echo "🎯 Architecture: ${{ env.TARGET_ARCH }}"
-        echo "📁 IPK file available in artifacts"
+        echo "🎯 For: 360T7 (MT7981)"
+        echo "📁 IPK available in artifacts"
         echo "=========================================="
