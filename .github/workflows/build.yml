@@ -59,7 +59,7 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
         
-        # 基础配置 - 使用单独的命令行方式
+        # 基础配置
         echo "CONFIG_TARGET_mediatek=y" >> .config
         echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
         echo "CONFIG_TARGET_mediatek_filogic_${{ env.SUBTARGET }}=y" >> .config
@@ -70,17 +70,36 @@ jobs:
         
         make defconfig
 
-    - name: Add custom package
+    - name: Add custom package (safe copy)
       run: |
         cd openwrt-source
         # 创建包目录
         mkdir -p package/network/services/${{ env.PACKAGE_NAME }}
         
-        # 复制所有文件
-        cp -r $GITHUB_WORKSPACE/* package/network/services/${{ env.PACKAGE_NAME }}/
+        # 复制文件（排除不需要的目录）
+        cd $GITHUB_WORKSPACE
+        # 复制所有可见文件，但排除.git、.github等目录
+        find . -maxdepth 1 -type f -exec cp {} ../openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/ \;
+        
+        # 复制src、root、test等目录（如果存在）
+        for dir in src root test luasrc; do
+          if [ -d "$dir" ]; then
+            cp -r "$dir" ../openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/
+          fi
+        done
         
         echo "Package contents:"
-        ls -la package/network/services/${{ env.PACKAGE_NAME }}/
+        ls -la ../openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/
+
+    - name: Verify Makefile exists
+      run: |
+        cd openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}
+        if [ ! -f "Makefile" ]; then
+          echo "❌ Error: Makefile not found in package directory!"
+          ls -la
+          exit 1
+        fi
+        echo "✅ Makefile found and verified"
 
     - name: Download sources
       run: |
