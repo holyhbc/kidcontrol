@@ -11,25 +11,23 @@ jobs:
     timeout-minutes: 15
 
     steps:
-    - name: Checkout source code
-      uses: actions/checkout@v4
+      - name: Checkout source code
+        uses: actions/checkout@v4
 
-    - name: Install required tools
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y ar tar gzip
+      - name: Install required tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ar tar gzip
 
-    - name: Build IPK package
-      run: |
-        APP_NAME="luci-app-kidcontrol"
-        VERSION="1.0-1"
+      - name: Build IPK package
+        run: |
+          APP_NAME="luci-app-kidcontrol"
+          VERSION="1.0-1"
 
-        # 创建目录
-        mkdir -p build/CONTROL
-        mkdir -p build/usr/lib/lua/luci
+          mkdir -p build/CONTROL
+          mkdir -p build/usr/lib/lua/luci
 
-        # control 文件
-        cat > build/CONTROL/control <<EOF
+          cat > build/CONTROL/control <<EOF
 Package: $APP_NAME
 Version: $VERSION
 Depends: nftables
@@ -40,61 +38,50 @@ Priority: optional
 Description: LuCI support for Kid Control
 EOF
 
-        # 复制源码
-        if [ -d "$APP_NAME/luasrc" ]; then
-          cp -r $APP_NAME/luasrc/* build/usr/lib/lua/luci/
-        fi
-        if [ -d "$APP_NAME/root" ]; then
-          cp -r $APP_NAME/root/* build/
-        fi
+          if [ -d "$APP_NAME/luasrc" ]; then
+            cp -r $APP_NAME/luasrc/* build/usr/lib/lua/luci/
+          fi
+          if [ -d "$APP_NAME/root" ]; then
+            cp -r $APP_NAME/root/* build/
+          fi
 
-        # 进入 build
-        cd build
+          cd build
+          tar --numeric-owner --group=0 --owner=0 -czf ../data.tar.gz $(ls | grep -v CONTROL)
+          cd CONTROL
+          tar --numeric-owner --group=0 --owner=0 -czf ../../control.tar.gz control
+          cd ../..
 
-        # 打包 data.tar.gz（实际文件，排除 CONTROL）
-        tar --numeric-owner --group=0 --owner=0 -czf ../data.tar.gz \
-          $(ls | grep -v CONTROL)
+          echo -n "2.0" > debian-binary
+          ar r $APP_NAME.ipk debian-binary control.tar.gz data.tar.gz
 
-        # 打包 control.tar.gz（只包含 control 文件）
-        cd CONTROL
-        tar --numeric-owner --group=0 --owner=0 -czf ../../control.tar.gz control
-        cd ../..
+          mkdir -p output
+          mv $APP_NAME.ipk output/
 
-        # 创建 debian-binary
-        echo -n "2.0" > debian-binary
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: luci-app-ipk
+          path: output/*.ipk
 
-        # 按顺序打包 IPK
-        ar r $APP_NAME.ipk debian-binary control.tar.gz data.tar.gz
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: output/*.ipk
+          tag_name: v${{ github.run_number }}
+          name: "Build #${{ github.run_number }}"
+          body: |
+            自动构建的 LuCI 应用安装包。
+            - 包名: luci-app-kidcontrol
+            - 版本: 1.0-1
+            - 构建编号: ${{ github.run_number }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-        # 输出目录
-        mkdir -p output
-        mv $APP_NAME.ipk output/
-
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: luci-app-ipk
-        path: output/*.ipk
-
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v2
-      with:
-        files: output/*.ipk
-        tag_name: v${{ github.run_number }}
-        name: "Build #${{ github.run_number }}"
-        body: |
-          自动构建的 LuCI 应用安装包。
-          - 包名: luci-app-kidcontrol
-          - 版本: 1.0-1
-          - 构建编号: ${{ github.run_number }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Verify IPK format
-      run: |
-        FILE=$(ls output/*.ipk)
-        echo "✅ Created IPK: $FILE"
-        ar t "$FILE"
-        echo ""
-        echo "File size:"
-        ls -lh "$FILE"
+      - name: Verify IPK format
+        run: |
+          FILE=$(ls output/*.ipk)
+          echo "✅ Created IPK: $FILE"
+          ar t "$FILE"
+          echo ""
+          echo "File size:"
+          ls -lh "$FILE"
