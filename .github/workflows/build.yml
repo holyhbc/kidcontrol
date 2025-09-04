@@ -26,11 +26,8 @@ jobs:
         echo "Current directory: $(pwd)"
         ls -la
         echo ""
-        echo "Kidcontrol directory:"
-        ls -la kidcontrol/ || echo "No kidcontrol directory"
-        echo ""
-        echo "Package directory:"
-        ls -la kidcontrol/luci-app-kidcontrol/ || echo "No package directory"
+        echo "Looking for Makefile:"
+        find . -name "Makefile" -type f
 
     - name: Install build dependencies
       run: |
@@ -73,35 +70,31 @@ jobs:
         rm -f sdk.tar.xz
         echo "SDK ready"
 
-    - name: Copy package from correct path
+    - name: Copy package files from current directory
       run: |
         echo "=== Copying Package Files ==="
-        
-        # 检查包目录是否存在
-        if [ ! -d "kidcontrol/luci-app-kidcontrol" ]; then
-          echo "❌ Package directory not found: kidcontrol/luci-app-kidcontrol/"
-          echo "Available directories:"
-          find . -type d -name "*kidcontrol*" -o -name "*luci*"
-          exit 1
-        fi
-        
-        echo "✅ Package directory found"
-        echo "Package contents:"
-        ls -la kidcontrol/luci-app-kidcontrol/
+        echo "Current directory contents:"
+        ls -la
         
         # 创建目标目录
         mkdir -p openwrt-sdk/package/network/services/${{ env.PACKAGE_NAME }}
         
-        # 复制所有文件从正确的路径
-        cp -r kidcontrol/luci-app-kidcontrol/* openwrt-sdk/package/network/services/${{ env.PACKAGE_NAME }}/
-        
-        # 清理可能不需要的文件
-        cd openwrt-sdk/package/network/services/${{ env.PACKAGE_NAME }}
-        rm -rf .git .github .gitignore README.md 2>/dev/null || true
+        # 复制所有文件（排除隐藏文件和不需要的目录）
+        for item in *; do
+          if [ "$item" != "openwrt-sdk" ] && [ "$item" != "." ] && [ "$item" != ".." ] && [ "${item:0:1}" != "." ]; then
+            if [ -f "$item" ]; then
+              cp "$item" openwrt-sdk/package/network/services/${{ env.PACKAGE_NAME }}/
+              echo "✅ Copied file: $item"
+            elif [ -d "$item" ]; then
+              cp -r "$item" openwrt-sdk/package/network/services/${{ env.PACKAGE_NAME }}/
+              echo "✅ Copied directory: $item"
+            fi
+          fi
+        done
         
         echo "✅ Files copied successfully"
         echo "Target directory contents:"
-        ls -la
+        ls -la openwrt-sdk/package/network/services/${{ env.PACKAGE_NAME }}/
 
     - name: Verify Makefile
       run: |
@@ -144,10 +137,6 @@ jobs:
         
         if [ -z "$IPK_FILE" ]; then
           IPK_FILE=$(find bin/packages -name "*${{ env.PACKAGE_NAME }}*.ipk" | head -n 1)
-        fi
-        
-        if [ -z "$IPK_FILE" ]; then
-          IPK_FILE=$(find bin/targets -name "*${{ env.PACKAGE_NAME }}*.ipk" | head -n 1)
         fi
         
         if [ -f "$IPK_FILE" ]; then
