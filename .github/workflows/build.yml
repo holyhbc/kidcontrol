@@ -4,7 +4,6 @@ on:
   push:
     branches: [ main, master ]
   pull_request:
-    branches: [ main, master ]
   workflow_dispatch:
 
 env:
@@ -32,26 +31,7 @@ jobs:
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y \
-          build-essential \
-          clang \
-          flex \
-          bison \
-          g++ \
-          gawk \
-          gcc-multilib \
-          gettext \
-          git \
-          libncurses5-dev \
-          libssl-dev \
-          python3 \
-          python3-pip \
-          rsync \
-          unzip \
-          zlib1g-dev \
-          file \
-          wget \
-          curl
+        sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib gettext git libncurses5-dev libssl-dev python3 python3-pip rsync unzip zlib1g-dev file wget curl
 
     - name: Download OpenWrt SDK for 360T7
       run: |
@@ -76,19 +56,15 @@ jobs:
         echo "Current directory contents:"
         ls -la
         
-        # 创建目标目录
         mkdir -p openwrt-sdk/package/network/services/${{ env.PACKAGE_NAME }}
         
-        # 精确复制文件，避免目录嵌套
         echo "Copying individual files and directories..."
         
-        # 复制Makefile（如果存在）
         if [ -f "Makefile" ]; then
           cp Makefile openwrt-sdk/package/network/services/${{ env.PACKAGE_NAME }}/
           echo "✅ Copied Makefile"
         fi
         
-        # 复制其他常见文件
         for file in *.mk *.md *.txt LICENSE; do
           if [ -f "$file" ]; then
             cp "$file" openwrt-sdk/package/network/services/${{ env.PACKAGE_NAME }}/
@@ -96,7 +72,6 @@ jobs:
           fi
         done
         
-        # 复制目录
         for dir in src root test luasrc; do
           if [ -d "$dir" ]; then
             cp -r "$dir" openwrt-sdk/package/network/services/${{ env.PACKAGE_NAME }}/
@@ -120,19 +95,14 @@ jobs:
         else
           echo "❌ Makefile not found! Creating a basic one..."
           
-          # 创建基本的Makefile
-          cat > Makefile << 'EOL'
-include $(TOPDIR)/rules.mk
-
-LUCI_TITLE:=LuCI support for Kid Control
-LUCI_DEPENDS:=+nftables
-PKG_VERSION:=1.0
-PKG_RELEASE:=1
-
-include $(TOPDIR)/feeds/luci/luci.mk
-
-# call BuildPackage - OpenWrt buildroot signature
-EOL
+          # 使用多个echo命令代替here-document
+          echo "include \$(TOPDIR)/rules.mk" > Makefile
+          echo "LUCI_TITLE:=LuCI support for Kid Control" >> Makefile
+          echo "LUCI_DEPENDS:=+nftables" >> Makefile
+          echo "PKG_VERSION:=1.0" >> Makefile
+          echo "PKG_RELEASE:=1" >> Makefile
+          echo "include \$(TOPDIR)/feeds/luci/luci.mk" >> Makefile
+          echo "# call BuildPackage - OpenWrt buildroot signature" >> Makefile
           
           echo "✅ Basic Makefile created"
           cat Makefile
@@ -166,7 +136,6 @@ EOL
           cp "$IPK_FILE" ../output/
         else
           echo "❌ IPK not found"
-          echo "Available IPK files:"
           find . -name "*.ipk" | head -10
           exit 1
         fi
