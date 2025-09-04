@@ -1,58 +1,76 @@
-name: Build on Tag
+name: Build luci-app-kidcontrol
 
 on:
   push:
-    tags:
-      - 'v*'
-
-permissions:
-  contents: write
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
-  build-release:
+  build:
     runs-on: ubuntu-24.04
 
     steps:
-    - name: Checkout code
+    - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Build IPK
+    - name: Create IPK package (correct method)
       run: |
-        # 构建步骤同上
-        mkdir -p ipk-build/CONTROL
-        echo "Package: luci-app-kidcontrol" > ipk-build/CONTROL/control
-        echo "Version: ${GITHUB_REF#refs/tags/}" >> ipk-build/CONTROL/control
-        echo "Architecture: all" >> ipk-build/CONTROL/control
-        echo "Description: LuCI support for Kid Control" >> ipk-build/CONTROL/control
+        # 创建临时目录
+        mkdir -p ipk-temp
         
-        if [ -d "luasrc" ]; then
-          mkdir -p ipk-build/usr/lib/lua/luci
-          cp -r luasrc/* ipk-build/usr/lib/lua/luci/
-        fi
+        # 创建标准的IPK文件结构
+        mkdir -p ipk-temp/CONTROL
+        mkdir -p ipk-temp/usr/lib/lua/luci
         
-        if [ -d "root" ]; then
-          cp -r root/* ipk-build/
-        fi
-        
-        cd ipk-build
-        tar -czf ../control.tar.gz CONTROL/
-        find . -path ./CONTROL -prune -o -type f -print | tar -czf ../data.tar.gz -T -
-        echo "2.0" > ../debian-binary
-        cd ..
-        ar r luci-app-kidcontrol.ipk debian-binary control.tar.gz data.tar.gz
-        rm -f control.tar.gz data.tar.gz debian-binary
-        rm -rf ipk-build
+        # 创建正确的control文件（必须字段）
+        cat > ipk-temp/CONTROL/control << EOF
+Package: luci-app-kidcontrol
+Version: 1.0-1
+Architecture: all
+Maintainer: unknown
+Description: LuCI support for Kid Control
+EOF
 
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
+        # 复制luasrc文件（如果存在）
+        if [ -d "luci-app-kidcontrol/luasrc" ]; then
+          cp -R luci-app-kidcontrol/luasrc/* ipk-temp/usr/lib/lua/luci/
+        fi
+        
+        # 复制root文件（如果存在）
+        if [ -d "luci-app-kidcontrol/root" ]; then
+          cp -R luci-app-kidcontrol/root/* ipk-temp/
+        fi
+        
+        # 创建data.tar.gz（正确方法）
+        cd ipk-temp
+        find . -type f -o -type l | grep -v './CONTROL/' | tar -czf ../data.tar.gz -T -
+        
+        # 创建control.tar.gz
+        tar -czf ../control.tar.gz ./CONTROL/
+        
+        # 创建debian-binary
+        echo "2.0" > ../debian-binary
+        
+        # 回到上级目录
+        cd ..
+        
+        # 创建IPK包（正确顺序）
+        ar rcs luci-app-kidcontrol.ipk debian-binary control.tar.gz data.tar.gz
+        
+        # 验证IPK格式
+        echo "=== 验证IPK格式 ==="
+        ar t luci-app-kidcontrol.ipk
+        
+        # 清理并创建输出
+        mkdir -p output
+        cp luci-app-kidcontrol.ipk output/
+        rm -f debian-binary control.tar.gz data.tar.gz
+        rm -rf ipk-temp
+        
+        echo "✅ IPK创建完成"
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
       with:
-        tag_name: ${{ github.ref }}
-        name: Release ${{ github.ref }}
-        files: luci-app-kidcontrol.ipk
-        body: |
-          Auto-built luci-app-kidcontrol
-          Version: ${{ github.ref }}
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        name: luci-app-kidcontrol
+        path: output/luci-app-kidcontrol.ipk
