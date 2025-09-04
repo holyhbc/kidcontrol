@@ -32,9 +32,27 @@ jobs:
       run: |
         echo "Using OpenWrt Docker SDK to build package..."
         
+        # 精确复制文件，避免循环复制
         mkdir -p build-package
-        cp -r . build-package/
         
+        # 复制所有文件（排除隐藏文件）
+        for item in *; do
+          if [ "$item" != "build-package" ] && [ "${item:0:1}" != "." ]; then
+            if [ -f "$item" ]; then
+              cp "$item" build-package/
+              echo "✅ Copied file: $item"
+            elif [ -d "$item" ]; then
+              cp -r "$item" build-package/
+              echo "✅ Copied directory: $item"
+            fi
+          fi
+        done
+        
+        echo "Build package contents:"
+        ls -la build-package/
+
+    - name: Run Docker build
+      run: |
         docker run --rm -v $(pwd)/build-package:/package \
           openwrtorg/sdk:mediatek_filogic-23.05.3 \
           /bin/sh -c "
@@ -56,7 +74,7 @@ jobs:
         mkdir -p ipk-build/CONTROL
         mkdir -p ipk-build/usr/lib/lua/luci
         
-        # 使用多个echo命令代替here-document
+        # 创建control文件
         echo "Package: ${{ env.PACKAGE_NAME }}" > ipk-build/CONTROL/control
         echo "Version: 1.0-1" >> ipk-build/CONTROL/control
         echo "Depends: nftables, luci" >> ipk-build/CONTROL/control
@@ -66,6 +84,7 @@ jobs:
         echo "Priority: optional" >> ipk-build/CONTROL/control
         echo "Description: LuCI support for Kid Control" >> ipk-build/CONTROL/control
         
+        # 复制文件
         if [ -d "luasrc" ]; then
           cp -r luasrc/* ipk-build/usr/lib/lua/luci/
           echo "✅ Copied luasrc files"
@@ -81,6 +100,7 @@ jobs:
           echo "✅ Copied root files"
         fi
         
+        # 创建IPK包
         cd ipk-build
         tar -czf ../control.tar.gz ./CONTROL
         tar -czf ../data.tar.gz . --exclude=./CONTROL
