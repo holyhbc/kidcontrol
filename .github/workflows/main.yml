@@ -1,181 +1,58 @@
-name: Build luci-app-kidcontrol
+name: Build on Tag
 
 on:
   push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
-  workflow_dispatch:
+    tags:
+      - 'v*'
 
-env:
-  PACKAGE_NAME: luci-app-kidcontrol
-  OPENWRT_VERSION: "24.10.1"
-  TARGET: "mediatek/filogic"
-  SUBTARGET: "mt7981"
+permissions:
+  contents: write
 
 jobs:
-  build:
+  build-release:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
 
     steps:
-    - name: Checkout source code
+    - name: Checkout code
       uses: actions/checkout@v4
+
+    - name: Build IPK
+      run: |
+        # 构建步骤同上
+        mkdir -p ipk-build/CONTROL
+        echo "Package: luci-app-kidcontrol" > ipk-build/CONTROL/control
+        echo "Version: ${GITHUB_REF#refs/tags/}" >> ipk-build/CONTROL/control
+        echo "Architecture: all" >> ipk-build/CONTROL/control
+        echo "Description: LuCI support for Kid Control" >> ipk-build/CONTROL/control
+        
+        if [ -d "luasrc" ]; then
+          mkdir -p ipk-build/usr/lib/lua/luci
+          cp -r luasrc/* ipk-build/usr/lib/lua/luci/
+        fi
+        
+        if [ -d "root" ]; then
+          cp -r root/* ipk-build/
+        fi
+        
+        cd ipk-build
+        tar -czf ../control.tar.gz CONTROL/
+        find . -path ./CONTROL -prune -o -type f -print | tar -czf ../data.tar.gz -T -
+        echo "2.0" > ../debian-binary
+        cd ..
+        ar r luci-app-kidcontrol.ipk debian-binary control.tar.gz data.tar.gz
+        rm -f control.tar.gz data.tar.gz debian-binary
+        rm -rf ipk-build
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
       with:
-        path: source-code
-
-    - name: Install build dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential \
-          clang \
-          flex \
-          bison \
-          g++ \
-          gawk \
-          gcc-multilib \
-          gettext \
-          git \
-          libncurses5-dev \
-          libssl-dev \
-          python3 \
-          python3-pip \
-          rsync \
-          unzip \
-          zlib1g-dev \
-          file \
-          wget \
-          curl \
-          subversion
-
-    - name: Clone OpenWrt source
-      run: |
-        git clone https://github.com/openwrt/openwrt.git openwrt-source
-        cd openwrt-source
-        git checkout v${{ env.OPENWRT_VERSION }}
-
-    - name: Copy package files
-      run: |
-        cd $GITHUB_WORKSPACE
-        # 查找并复制包文件
-        if [ -d "source-code" ]; then
-          mkdir -p openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}
-          cp -r source-code/* openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/
-          echo "✅ Files copied from source-code/"
-        else
-          # 备用方案：直接使用当前目录
-          mkdir -p openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}
-          cp -r * openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/
-          echo "✅ Files copied from workspace root"
-        fi
-        
-        echo "Package contents:"
-        ls -la openwrt-source/package/network/services/${{ env.PACKAGE_NAME }}/
-
-    - name: Setup minimal configuration
-      run: |
-        cd $GITHUB_WORKSPACE/openwrt-source
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
-        
-        # 最小化配置，避免编译不必要的包
-        cat > .config << 'EOL'
-CONFIG_TARGET_mediatek=y
-CONFIG_TARGET_mediatek_filogic=y
-CONFIG_TARGET_mediatek_filogic_mt7981=y
-CONFIG_TARGET_mediatek_filogic_mt7981_360t7=y
-CONFIG_PACKAGE_luci=y
-CONFIG_PACKAGE_nftables=y
-CONFIG_PACKAGE_luci-app-kidcontrol=m
-CONFIG_ALL_NONSHARED=n
-CONFIG_ALL_KMODS=n
-CONFIG_ALL=n
-CONFIG_AUTOREMOVE=y
-EOL
-        
-        make defconfig
-
-    - name: Download only required sources
-      run: |
-        cd $GITHUB_WORKSPACE/openwrt-source
-        # 只下载必要的包，避免编译整个系统
-        make toolchain/install -j$(nproc)
-        make package/nftables/download
-        make package/luci/download
-        make package/network/services/${{ env.PACKAGE_NAME }}/download
-
-    - name: Build with simplified approach
-      run: |
-        cd $GITHUB_WORKSPACE/openwrt-source
-        echo "Building with simplified approach..."
-        
-        # 方法1：尝试直接编译我们的包（让make自动处理依赖）
-        make package/network/services/${{ env.PACKAGE_NAME }}/compile V=s -j1 || \
-        # 方法2：如果失败，尝试先编译依赖
-        (echo "Direct compile failed, trying dependency-first approach..." && \
-         make package/nftables/compile -j1 V=s && \
-         make package/luci/compile -j1 V=s && \
-         make package/network/services/${{ env.PACKAGE_NAME }}/compile V=s -j1)
-
-    - name: Alternative build method
-      if: failure()
-      run: |
-        cd $GITHUB_WORKSPACE/openwrt-source
-        echo "Trying alternative build method..."
-        
-        # 清除之前的编译结果
-        rm -rf build_dir/target-*/linux-mediatek_filogic/package/network/services/${{ env.PACKAGE_NAME }}
-        
-        # 使用更详细的输出和单线程编译
-        make package/network/services/${{ env.PACKAGE_NAME }}/clean
-        make package/network/services/${{ env.PACKAGE_NAME }}/compile V=sc -j1
-
-    - name: Find compiled package
-      run: |
-        cd $GITHUB_WORKSPACE/openwrt-source
-        echo "Searching for IPK files..."
-        
-        # 在多个可能的位置查找
-        IPK_PATHS=(
-          "bin/packages/*/${{ env.PACKAGE_NAME }}*.ipk"
-          "bin/targets/*/packages/${{ env.PACKAGE_NAME }}*.ipk"
-          "bin/*/packages/*/${{ env.PACKAGE_NAME }}*.ipk"
-        )
-        
-        for pattern in "${IPK_PATHS[@]}"; do
-          IPK_FILE=$(find . -path "$pattern" 2>/dev/null | head -n 1)
-          if [ -n "$IPK_FILE" ] && [ -f "$IPK_FILE" ]; then
-            echo "✅ Found: $IPK_FILE"
-            mkdir -p $GITHUB_WORKSPACE/output
-            cp "$IPK_FILE" $GITHUB_WORKSPACE/output/
-            break
-          fi
-        done
-        
-        if [ ! -f "$GITHUB_WORKSPACE/output/"*.ipk ]; then
-          echo "❌ No IPK file found"
-          echo "Searching all IPK files:"
-          find . -name "*.ipk" | head -20
-          exit 1
-        fi
-
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ env.PACKAGE_NAME }}-ipk
-        path: output/*.ipk
-
-    - name: Show build result
-      run: |
-        if [ -f "$GITHUB_WORKSPACE/output/"*.ipk ]; then
-          echo "=========================================="
-          echo "✅ Build successful!"
-          echo "📦 Package: ${{ env.PACKAGE_NAME }}"
-          echo "🎯 For: 360T7 (MT7981)"
-          echo "📁 IPK file available in artifacts"
-          echo "=========================================="
-        else
-          echo "❌ Build failed"
-          exit 1
-        fi
+        tag_name: ${{ github.ref }}
+        name: Release ${{ github.ref }}
+        files: luci-app-kidcontrol.ipk
+        body: |
+          Auto-built luci-app-kidcontrol
+          Version: ${{ github.ref }}
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
