@@ -121,7 +121,7 @@ jobs:
           echo "❌ Makefile not found! Creating a basic one..."
           
           # 创建基本的Makefile
-          cat > Makefile << 'EOF'
+          cat > Makefile << 'EOL'
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI support for Kid Control
@@ -132,7 +132,7 @@ PKG_RELEASE:=1
 include $(TOPDIR)/feeds/luci/luci.mk
 
 # call BuildPackage - OpenWrt buildroot signature
-EOF
+EOL
           
           echo "✅ Basic Makefile created"
           cat Makefile
