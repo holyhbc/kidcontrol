@@ -3,14 +3,12 @@ name: Build luci-app-kidcontrol
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 15
 
     steps:
     - name: Checkout source code
@@ -19,10 +17,15 @@ jobs:
     - name: Display project structure
       run: |
         echo "=== 项目结构 ==="
-        find . -name "*" -type f | grep -E "(Makefile|\.c$|init.d|usr/|etc/)" | head -20
+        echo "当前目录: $(pwd)"
+        ls -la
         echo ""
-        echo "=== root目录内容 ==="
-        find luci-app-kidcontrol/root -type f 2>/dev/null || echo "没有找到root目录"
+        echo "luci-app-kidcontrol目录:"
+        ls -la luci-app-kidcontrol/ || echo "目录不存在"
+        echo ""
+        echo "重要文件检查:"
+        [ -d "luci-app-kidcontrol/luasrc" ] && echo "✅ luasrc目录存在" || echo "❌ luasrc目录不存在"
+        [ -f "luci-app-kidcontrol/Makefile" ] && echo "✅ Makefile存在" || echo "❌ Makefile不存在"
 
     - name: Create IPK package structure
       run: |
@@ -39,70 +42,58 @@ jobs:
         echo "Priority: optional" >> ipk-build/CONTROL/control
         echo "Description: LuCI support for Kid Control" >> ipk-build/CONTROL/control
 
-        # 复制root目录下的所有文件（如果存在）
+        # 复制luasrc目录（最重要的部分）
+        if [ -d "luci-app-kidcontrol/luasrc" ]; then
+          mkdir -p ipk-build/usr/lib/lua/luci
+          cp -r luci-app-kidcontrol/luasrc/* ipk-build/usr/lib/lua/luci/
+          echo "✅ 复制luasrc目录"
+        else
+          echo "❌ 错误: luasrc目录不存在！"
+          exit 1
+        fi
+
+        # 复制root目录（如果有）
         if [ -d "luci-app-kidcontrol/root" ]; then
-          echo "✅ 复制root目录文件"
           cp -r luci-app-kidcontrol/root/* ipk-build/
+          echo "✅ 复制root目录"
         fi
 
-        # 复制源代码（如果存在）
-        if [ -f "luci-app-kidcontrol/src/kidcontrol.c" ]; then
-          mkdir -p ipk-build/usr/src
-          cp "luci-app-kidcontrol/src/kidcontrol.c" ipk-build/usr/src/
-          echo "✅ 复制源代码"
-        fi
-
-        # 显示最终的文件结构
-        echo "=== IPK包文件结构 ==="
-        find ipk-build -type f
+        echo "最终文件结构:"
+        find ipk-build -type f | head -10
 
     - name: Create IPK package
       run: |
-        # 进入构建目录
+        # 创建tar包
         cd ipk-build
-        
-        # 创建control.tar.gz
-        tar -czf ../control.tar.gz ./CONTROL/
-        
-        # 创建data.tar.gz（排除CONTROL目录）
+        tar -czf ../control.tar.gz CONTROL/
         find . -path ./CONTROL -prune -o -type f -print | tar -czf ../data.tar.gz -T -
-        
-        # 创建debian-binary
         echo "2.0" > ../debian-binary
         
-        # 回到上级目录创建IPK
+        # 创建IPK
         cd ..
         ar r luci-app-kidcontrol.ipk debian-binary control.tar.gz data.tar.gz
         
-        # 创建输出目录并复制IPK
+        # 准备输出
         mkdir -p output
         cp luci-app-kidcontrol.ipk output/
         
-        # 清理临时文件
+        # 清理
         rm -f control.tar.gz data.tar.gz debian-binary
         rm -rf ipk-build
         
-        echo "✅ IPK包创建成功!"
+        echo "✅ IPK创建成功!"
         ls -la output/
 
-    - name: Upload IPK artifact
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: luci-app-kidcontrol-ipk
         path: output/luci-app-kidcontrol.ipk
 
-    - name: Show success message
+    - name: Success message
       run: |
         echo "=========================================="
-        echo "🎉 构建成功!"
-        echo "📦 包名: luci-app-kidcontrol"
-        echo "📁 IPK文件可在Artifacts中下载"
+        echo "🎉 编译成功!"
+        echo "📦 纯Lua应用不需要src目录"
+        echo "📁 IPK文件已生成"
         echo "=========================================="
-
-    - name: Create backup package (if main method fails)
-      if: failure()
-      run: |
-        # 备用方案：创建包含所有文件的zip包
-        mkdir -p output
-        zip -r output/kidcontrol-source.zip .
-        echo "✅ 创建源代码备份包"
