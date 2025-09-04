@@ -1,0 +1,56 @@
+name: Build and Release luci-app-kidcontrol
+
+on:
+  release:
+    types: [published, edited]  # 在创建或编辑Release时触发
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+    - name: Checkout source code
+      uses: actions/checkout@v4
+
+    - name: Build IPK package
+      run: |
+        # 这里放置你之前成功的构建步骤，即创建IPK包的那些命令
+        mkdir -p ipk-build/CONTROL
+        echo "Package: luci-app-kidcontrol" > ipk-build/CONTROL/control
+        echo "Version: 1.0" >> ipk-build/CONTROL/control
+        echo "Architecture: all" >> ipk-build/CONTROL/control
+        echo "Description: LuCI support for Kid Control" >> ipk-build/CONTROL/control
+        
+        # 复制luasrc（核心）
+        mkdir -p ipk-build/usr/lib/lua/luci
+        cp -r luasrc/* ipk-build/usr/lib/lua/luci/
+        
+        # 复制root目录（如果有）
+        if [ -d "root" ]; then
+          cp -r root/* ipk-build/
+        fi
+        
+        # 构建IPK
+        cd ipk-build
+        tar -czf ../control.tar.gz CONTROL/
+        find . -path ./CONTROL -prune -o -type f -print | tar -czf ../data.tar.gz -T -
+        echo "2.0" > ../debian-binary
+        cd ..
+        ar r luci-app-kidcontrol.ipk debian-binary control.tar.gz data.tar.gz
+        mkdir -p output
+        cp luci-app-kidcontrol.ipk output/
+        
+        # 清理
+        rm -f control.tar.gz data.tar.gz debian-binary
+        rm -rf ipk-build
+
+    - name: Upload to Release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./output/luci-app-kidcontrol.ipk
+        asset_name: luci-app-kidcontrol.ipk
+        asset_content_type: application/vnd.ipk
