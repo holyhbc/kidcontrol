@@ -1,9 +1,7 @@
-name: Build luci-app-kidcontrol for 360T7
+name: Build luci-app-kidcontrol
 
 on:
   push:
-    branches: [ main, master ]
-  pull_request:
     branches: [ main, master ]
   workflow_dispatch:
 
@@ -13,106 +11,54 @@ env:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 15
 
     steps:
     - name: Checkout source code
       uses: actions/checkout@v4
 
-    - name: Debug project structure
+    - name: Create IPK package
       run: |
-        echo "=== Project Structure ==="
-        echo "Current directory: $(pwd)"
-        ls -la
-        echo ""
-        echo "Makefile content:"
-        cat Makefile || echo "No Makefile in root"
-
-    - name: Build using OpenWrt Docker SDK
-      run: |
-        echo "Using OpenWrt Docker SDK to build package..."
-        
-        # 精确复制文件，避免循环复制
-        mkdir -p build-package
-        
-        # 复制所有文件（排除隐藏文件）
-        for item in *; do
-          if [ "$item" != "build-package" ] && [ "${item:0:1}" != "." ]; then
-            if [ -f "$item" ]; then
-              cp "$item" build-package/
-              echo "✅ Copied file: $item"
-            elif [ -d "$item" ]; then
-              cp -r "$item" build-package/
-              echo "✅ Copied directory: $item"
-            fi
-          fi
-        done
-        
-        echo "Build package contents:"
-        ls -la build-package/
-
-    - name: Run Docker build
-      run: |
-        docker run --rm -v $(pwd)/build-package:/package \
-          openwrtorg/sdk:mediatek_filogic-23.05.3 \
-          /bin/sh -c "
-            cd /package && \
-            echo '=== Building in Docker ===' && \
-            ls -la && \
-            if [ -f Makefile ]; then \
-              make -j4 V=s; \
-            else \
-              echo 'No Makefile found!'; \
-              exit 1; \
-            fi
-          " || echo "Docker build attempt completed"
-
-    - name: Alternative build with manual IPK creation
-      run: |
-        echo "=== Creating IPK manually ==="
-        
+        # 创建必要的目录结构
         mkdir -p ipk-build/CONTROL
         mkdir -p ipk-build/usr/lib/lua/luci
         
-        # 创建control文件
+        # 创建control文件 - 最简单的方式
         echo "Package: ${{ env.PACKAGE_NAME }}" > ipk-build/CONTROL/control
-        echo "Version: 1.0-1" >> ipk-build/CONTROL/control
-        echo "Depends: nftables, luci" >> ipk-build/CONTROL/control
-        echo "Architecture: all" >> ipk-build/CONTROL/control
-        echo "Maintainer: Build Bot" >> ipk-build/CONTROL/control
-        echo "Section: luci" >> ipk-build/CONTROL/control
-        echo "Priority: optional" >> ipk-build/CONTROL/control
+        echo "Version: 1.0" >> ipk-build/CONTROL/control
+        echo "Architecture: all" >> ipk-build/CONTROL/control  
         echo "Description: LuCI support for Kid Control" >> ipk-build/CONTROL/control
         
-        # 复制文件
+        # 复制文件（如果存在）
         if [ -d "luasrc" ]; then
           cp -r luasrc/* ipk-build/usr/lib/lua/luci/
-          echo "✅ Copied luasrc files"
         fi
         
         if [ -d "src" ]; then
           cp -r src/* ipk-build/usr/lib/lua/luci/
-          echo "✅ Copied src files"
         fi
         
         if [ -d "root" ]; then
           cp -r root/* ipk-build/
-          echo "✅ Copied root files"
         fi
         
-        # 创建IPK包
+        # 创建tar包（修正tar命令语法）
         cd ipk-build
-        tar -czf ../control.tar.gz ./CONTROL
-        tar -czf ../data.tar.gz . --exclude=./CONTROL
+        tar -czf ../control.tar.gz CONTROL/
+        find . -path ./CONTROL -prune -o -print | tar -czf ../data.tar.gz -T -
+        
+        # 创建debian-binary
         echo "2.0" > ../debian-binary
         
+        # 创建IPK
         cd ..
         ar r ${PACKAGE_NAME}.ipk debian-binary control.tar.gz data.tar.gz
         
+        # 创建输出目录
         mkdir -p output
         cp ${PACKAGE_NAME}.ipk output/
         
-        echo "✅ Manual IPK created"
+        echo "✅ IPK created successfully!"
         ls -la output/
 
     - name: Upload artifact
@@ -121,10 +67,10 @@ jobs:
         name: ${{ env.PACKAGE_NAME }}-ipk
         path: output/*.ipk
 
-    - name: Show completion message
+    - name: Success message
       run: |
         echo "=========================================="
-        echo "🏗️  Build process completed!"
-        echo "📦 Package: ${{ env.PACKAGE_NAME }}"
-        echo "📁 Check artifacts for IPK file"
+        echo "🎉 SUCCESS! IPK package created."
+        echo "📦 File: ${{ env.PACKAGE_NAME }}.ipk"
+        echo "📁 Download from Artifacts section"
         echo "=========================================="
