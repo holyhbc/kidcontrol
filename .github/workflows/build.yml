@@ -30,14 +30,11 @@ jobs:
 
     - name: Build using OpenWrt Docker SDK
       run: |
-        # 使用OpenWrt官方Docker镜像进行编译
         echo "Using OpenWrt Docker SDK to build package..."
         
-        # 创建临时目录结构
         mkdir -p build-package
         cp -r . build-package/
         
-        # 使用Docker编译
         docker run --rm -v $(pwd)/build-package:/package \
           openwrtorg/sdk:mediatek_filogic-23.05.3 \
           /bin/sh -c "
@@ -54,26 +51,21 @@ jobs:
 
     - name: Alternative build with manual IPK creation
       run: |
-        # 如果Docker编译失败，尝试手动创建IPK
         echo "=== Creating IPK manually ==="
         
-        # 创建IPK包结构
         mkdir -p ipk-build/CONTROL
         mkdir -p ipk-build/usr/lib/lua/luci
         
-        # 创建控制文件
-        cat > ipk-build/CONTROL/control << EOF
-Package: ${{ env.PACKAGE_NAME }}
-Version: 1.0-1
-Depends: nftables, luci
-Architecture: all
-Maintainer: Build Bot
-Section: luci
-Priority: optional
-Description: LuCI support for Kid Control
-EOF
+        # 使用多个echo命令代替here-document
+        echo "Package: ${{ env.PACKAGE_NAME }}" > ipk-build/CONTROL/control
+        echo "Version: 1.0-1" >> ipk-build/CONTROL/control
+        echo "Depends: nftables, luci" >> ipk-build/CONTROL/control
+        echo "Architecture: all" >> ipk-build/CONTROL/control
+        echo "Maintainer: Build Bot" >> ipk-build/CONTROL/control
+        echo "Section: luci" >> ipk-build/CONTROL/control
+        echo "Priority: optional" >> ipk-build/CONTROL/control
+        echo "Description: LuCI support for Kid Control" >> ipk-build/CONTROL/control
         
-        # 复制LuCI文件（如果存在）
         if [ -d "luasrc" ]; then
           cp -r luasrc/* ipk-build/usr/lib/lua/luci/
           echo "✅ Copied luasrc files"
@@ -89,7 +81,6 @@ EOF
           echo "✅ Copied root files"
         fi
         
-        # 创建IPK包
         cd ipk-build
         tar -czf ../control.tar.gz ./CONTROL
         tar -czf ../data.tar.gz . --exclude=./CONTROL
@@ -98,7 +89,6 @@ EOF
         cd ..
         ar r ${PACKAGE_NAME}.ipk debian-binary control.tar.gz data.tar.gz
         
-        # 创建输出目录
         mkdir -p output
         cp ${PACKAGE_NAME}.ipk output/
         
